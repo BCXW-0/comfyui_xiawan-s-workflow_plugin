@@ -1,0 +1,9 @@
+import "./comfyui/lora_loader.js";
+import "./comfyui/lora_stacker.js";
+import "./comfyui/trigger_word_toggle.js";
+import "./comfyui/prompt_dynamic_inputs.js";
+import "./comfyui/workflow_registry.js";
+import "./comfyui/usage_stats.js";
+import "./comfyui/top_menu_extension.js";
+import "./comfyui/wanvideo_lora_select.js";
+import "./comfyui/vue-widgets/lora-manager-widgets.js";

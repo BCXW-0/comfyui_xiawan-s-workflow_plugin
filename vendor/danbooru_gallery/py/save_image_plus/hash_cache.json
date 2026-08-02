@@ -1,0 +1,18 @@
+{
+  "D:\\AI-DRAWING TOOLS\\ComfyUI-aki-v1.6\\ComfyUI\\models\\checkpoints\\waiIllustriousSDXL_v140.safetensors": {
+    "mtime": 1773752567.565743,
+    "hash": "bdb59bac77"
+  },
+  "D:\\AI-DRAWING TOOLS\\ComfyUI-aki-v1.6\\ComfyUI\\models\\checkpoints\\zukiAnimeILL_v50.safetensors": {
+    "mtime": 1768493221.3606968,
+    "hash": "8aaafbbc2c"
+  },
+  "D:\\AI-DRAWING TOOLS\\ComfyUI-aki-v1.6\\ComfyUI\\models\\loras\\xiawan_pro.safetensors": {
+    "mtime": 1774762305.6170976,
+    "hash": "1cd6df56f5"
+  },
+  "D:\\AI-DRAWING TOOLS\\ComfyUI-aki-v1.6\\ComfyUI\\models\\loras\\cyan-000027.safetensors": {
+    "mtime": 1749048961.1190476,
+    "hash": "ab39cf1691"
+  }
+}

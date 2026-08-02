@@ -1,0 +1,9 @@
+# Python caches and local runtime output
+**/__pycache__/
+*.py[cod]
+*.log
+*.db
+*.backup_*
+
+# Large local ControlNet Auxiliary checkpoints are distributed separately.
+vendor/controlnet_aux/ckpts/**/*.pth

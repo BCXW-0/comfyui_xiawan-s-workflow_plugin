@@ -1,0 +1,9 @@
+[project]
+name = "comfyui_xiawan_workflow_plugin"
+description = "Xiawan workflow custom nodes for ComfyUI"
+version = "1.0.0"
+license = { text = "MIT" }
+
+[tool.comfy]
+PublisherId = "xiawan"
+DisplayName = "Xiawan Workflow Plugin"
