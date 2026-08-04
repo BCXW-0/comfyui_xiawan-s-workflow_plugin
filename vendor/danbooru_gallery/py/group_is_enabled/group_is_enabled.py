@@ -9,7 +9,8 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-# 全局状态缓存（由前端在执行前通过API同步）
+# Legacy cache is retained for API compatibility. Execution prefers the
+# workflow-local metadata and never treats an unknown group as enabled.
 _group_states_cache = {}
 _cache_lock = threading.Lock()
 
@@ -22,14 +23,21 @@ def update_all_group_states(states: dict):
     logger.debug(f"[GroupIsEnabled] 已更新 {len(states)} 个组状态")
 
 
-def get_group_state(group_name: str) -> bool:
+def get_group_state(group_name: str) -> bool | None:
     """获取组状态"""
     with _cache_lock:
-        return _group_states_cache.get(group_name, True)
+        return _group_states_cache.get(group_name)
+
+
+def _unwrap_extra_pnginfo(extra_pnginfo):
+    if isinstance(extra_pnginfo, (list, tuple)):
+        return extra_pnginfo[0] if extra_pnginfo else None
+    return extra_pnginfo
 
 
 def get_workflow_group_state(extra_pnginfo, group_name: str):
     """Read GroupIgnoreManager state from embedded workflow metadata."""
+    extra_pnginfo = _unwrap_extra_pnginfo(extra_pnginfo)
     if not isinstance(extra_pnginfo, dict) or not group_name:
         return None
 
@@ -59,7 +67,7 @@ def get_workflow_group_state(extra_pnginfo, group_name: str):
             ):
                 return group["enabled"]
 
-    # Cache is only a fallback for groups not listed explicitly.
+    # Cache is only a compatibility fallback for explicitly known groups.
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -110,7 +118,7 @@ class GroupIsEnabled:
         """强制每次执行时重新检查状态"""
         # 返回当前状态，确保状态变化时重新执行
         workflow_state = get_workflow_group_state(extra_pnginfo, group_name)
-        return workflow_state if workflow_state is not None else get_group_state(group_name)
+        return workflow_state if workflow_state is not None else (get_group_state(group_name) is True)
 
     def check_group_status(self, group_name, extra_pnginfo=None):
         """
@@ -122,13 +130,13 @@ class GroupIsEnabled:
         Returns:
             tuple: (is_enabled,) 布尔值元组
         """
-        # 处理空组名或无效组名
+        # 处理空组名或无效组名。未知组默认关闭，防止可选分支意外执行。
         if not group_name or group_name == "(无被管理的组)":
-            logger.warning("[GroupIsEnabled] 未选择有效组名，默认返回True")
-            return (True,)
+            logger.warning("[GroupIsEnabled] 未选择有效组名，默认返回False")
+            return (False,)
 
         workflow_state = get_workflow_group_state(extra_pnginfo, group_name)
-        is_enabled = workflow_state if workflow_state is not None else get_group_state(group_name)
+        is_enabled = workflow_state if workflow_state is not None else (get_group_state(group_name) is True)
 
         logger.debug(f"[GroupIsEnabled] 检查组状态: {group_name} = {is_enabled}")
 

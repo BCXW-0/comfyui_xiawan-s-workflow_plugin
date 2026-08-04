@@ -24,6 +24,37 @@ def _mapped(relative_name: str, keys: tuple[str, ...]):
     return ({key: classes[key] for key in keys}, {key: displays.get(key, key) for key in keys})
 
 
+def _add_mapped(classes, displays, relative_name: str, keys: tuple[str, ...]):
+    """Register one optional vendor module without aborting other modules."""
+    try:
+        mapped_classes, mapped_displays = _mapped(relative_name, keys)
+    except (ImportError, ModuleNotFoundError, AttributeError, KeyError, OSError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning(
+            "[Xiawan] skipped vendor module %s: %s",
+            relative_name,
+            exc,
+        )
+        return
+    classes.update(mapped_classes)
+    displays.update(mapped_displays)
+
+
+def _add_class(classes, displays, relative_name: str, public_name: str, class_name: str, display_name: str):
+    """Register modules that expose classes directly instead of node mappings."""
+    try:
+        node_class = getattr(_module(relative_name), class_name)
+    except (ImportError, ModuleNotFoundError, AttributeError, KeyError, OSError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning(
+            "[Xiawan] skipped vendor class %s.%s: %s",
+            relative_name,
+            class_name,
+            exc,
+        )
+        return
+    classes[public_name] = node_class
+    displays[public_name] = display_name
+
+
 class XiawanImageIndexSwitch:
     @classmethod
     def INPUT_TYPES(cls):
@@ -216,10 +247,8 @@ def load_vendor_nodes():
         "WeiLinPromptUIWithoutLora": "WeiLin 提示词编辑器",
     }
 
-    util = _module(".vendor.mira.Util")
-    tagger = _module(".vendor.mira.Tagger")
-    classes.update({"CheckpointLoaderSimpleMira": util.CheckpointLoaderSimple, "cl_tagger_mira": tagger.cl_tagger})
-    displays.update({"CheckpointLoaderSimpleMira": "Checkpoint Loader with Name", "cl_tagger_mira": "Mira CL Tagger"})
+    _add_class(classes, displays, ".vendor.mira.Util", "CheckpointLoaderSimpleMira", "CheckpointLoaderSimple", "Checkpoint Loader with Name")
+    _add_class(classes, displays, ".vendor.mira.Tagger", "cl_tagger_mira", "cl_tagger", "Mira CL Tagger")
 
     vendor_maps = (
         (".vendor.danbooru_gallery.py.danbooru_gallery", ("DanbooruGalleryNode",)),
@@ -238,41 +267,16 @@ def load_vendor_nodes():
         (".vendor.ipadapter_plus.IPAdapterPlus", ("IPAdapterAdvanced", "IPAdapterUnifiedLoader", "PrepImageForClipVision")),
     )
     for module_name, keys in vendor_maps:
-        mapped_classes, mapped_displays = _mapped(module_name, keys)
-        classes.update(mapped_classes)
-        displays.update(mapped_displays)
+        _add_mapped(classes, displays, module_name, keys)
 
-    _module(".vendor.impact_pack")
-    impact = _module(".vendor.impact_pack.modules.impact.impact_pack")
-    classes.update(
-        {
-            "FaceDetailer": impact.FaceDetailer,
-            "IterativeImageUpscale": impact.IterativeImageUpscale,
-            "PixelKSampleUpscalerProvider": impact.PixelKSampleUpscalerProvider,
-            "SAMLoader": impact.SAMLoader,
-        }
-    )
-    displays.update(
-        {
-            "FaceDetailer": "FaceDetailer",
-            "IterativeImageUpscale": "Iterative Image Upscale",
-            "PixelKSampleUpscalerProvider": "Pixel KSample Upscaler Provider",
-            "SAMLoader": "SAM Loader",
-        }
-    )
+    for key, label in (
+        ("FaceDetailer", "FaceDetailer"),
+        ("IterativeImageUpscale", "Iterative Image Upscale"),
+        ("PixelKSampleUpscalerProvider", "Pixel KSample Upscaler Provider"),
+        ("SAMLoader", "SAM Loader"),
+    ):
+        _add_class(classes, displays, ".vendor.impact_pack.modules.impact.impact_pack", key, key, label)
 
-    lora_loader = _module(".vendor.lora_manager.py.nodes.lora_loader")
-    trigger_words = _module(".vendor.lora_manager.py.nodes.trigger_word_toggle")
-    classes.update(
-        {
-            "Lora Loader (LoraManager)": lora_loader.LoraLoaderLM,
-            "TriggerWord Toggle (LoraManager)": trigger_words.TriggerWordToggleLM,
-        }
-    )
-    displays.update(
-        {
-            "Lora Loader (LoraManager)": "LoRA",
-            "TriggerWord Toggle (LoraManager)": "LoRA 触发词",
-        }
-    )
+    _add_class(classes, displays, ".vendor.lora_manager.py.nodes.lora_loader", "Lora Loader (LoraManager)", "LoraLoaderLM", "LoRA")
+    _add_class(classes, displays, ".vendor.lora_manager.py.nodes.trigger_word_toggle", "TriggerWord Toggle (LoraManager)", "TriggerWordToggleLM", "LoRA 触发词")
     return classes, displays

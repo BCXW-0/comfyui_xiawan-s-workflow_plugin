@@ -318,7 +318,7 @@ class XiawanHighResPerformanceProfile:
 
 
 class XiawanImageVRAMGuard:
-    """Pass an image onward after fully offloading stale models between detail stages."""
+    """Pass an image onward and unload models only when memory is pressured."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -338,9 +338,14 @@ class XiawanImageVRAMGuard:
     def guard(self, image, enabled=True, minimum_free_vram_mb=3072):
         before = _cuda_free_mb()
         threshold = max(0, int(minimum_free_vram_mb))
-        # Each FaceDetailer stage can load a sizable model and VAE.  Retaining
-        # those modules across serial high-resolution stages exceeds 8 GB VRAM.
-        actions = _release_cuda_cache(True, True, unload_models=True) if _coerce_bool(enabled) else "disabled"
+        should_release = _coerce_bool(enabled) and (
+            before < 0 or threshold == 0 or before < threshold
+        )
+        actions = (
+            _release_cuda_cache(True, True, unload_models=True)
+            if should_release
+            else ("threshold_met" if _coerce_bool(enabled) else "disabled")
+        )
         after = _cuda_free_mb()
         pressure = "under_threshold" if after >= 0 and after < threshold else "threshold_met"
         report = f"before={before}MB | action={actions} | after={after}MB | {pressure}:{threshold}MB"
@@ -368,7 +373,14 @@ class XiawanLatentVRAMGuard:
     def guard(self, latent, enabled=True, minimum_free_vram_mb=3072):
         before = _cuda_free_mb()
         threshold = max(0, int(minimum_free_vram_mb))
-        actions = _release_cuda_cache(True, True, unload_models=True) if _coerce_bool(enabled) else "disabled"
+        should_release = _coerce_bool(enabled) and (
+            before < 0 or threshold == 0 or before < threshold
+        )
+        actions = (
+            _release_cuda_cache(True, True, unload_models=True)
+            if should_release
+            else ("threshold_met" if _coerce_bool(enabled) else "disabled")
+        )
         after = _cuda_free_mb()
         pressure = "under_threshold" if after >= 0 and after < threshold else "threshold_met"
         report = f"before={before}MB | action={actions} | after={after}MB | {pressure}:{threshold}MB"
@@ -376,7 +388,9 @@ class XiawanLatentVRAMGuard:
 
 
 class XiawanHighResModelPreflight:
-    """Unload stale models before a high-memory sampler or detailer stage."""
+    """Prepare a high-memory stage without unloading when memory is sufficient."""
+
+    CONSERVATIVE_THRESHOLD_MB = 3072
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -395,13 +409,22 @@ class XiawanHighResModelPreflight:
 
     def guard(self, model, enabled=True, unload_models=True):
         before = _cuda_free_mb()
+        should_unload = _coerce_bool(unload_models) and (
+            before < 0 or before < self.CONSERVATIVE_THRESHOLD_MB
+        )
         actions = (
-            _release_cuda_cache(True, True, unload_models=_coerce_bool(unload_models))
+            _release_cuda_cache(True, True, unload_models=should_unload)
             if _coerce_bool(enabled)
             else "disabled"
         )
         after = _cuda_free_mb()
-        return (model, before, after, f"before={before}MB | action={actions} | after={after}MB")
+        return (
+            model,
+            before,
+            after,
+            f"before={before}MB | threshold={self.CONSERVATIVE_THRESHOLD_MB}MB | "
+            f"unload={should_unload} | action={actions} | after={after}MB",
+        )
 
 
 class XiawanBaseParams:
@@ -534,10 +557,11 @@ class XiawanBatchSeedMatrix:
             seeds = [(base + i * step) & 0xffffffffffffffff for i in range(count)]
         while len(seeds) < 4:
             seeds.append(seeds[-1] if seeds else base)
+        applied_seed = seeds[0] if apply_enabled else base
         batch_size = count if apply_enabled else 1
         status = "已应用到 batch（同次运行多图，seed 递增）" if apply_enabled else "仅预览（未改 batch；打开「启用应用到批次」生效）"
         text = status + "\n" + "\n".join(f"S{i}: {s}" for i, s in enumerate(seeds[:count]))
-        return (int(seeds[0]), int(seeds[1]), int(seeds[2]), int(seeds[3]), int(batch_size), text, apply_enabled)
+        return (int(applied_seed), int(seeds[1]), int(seeds[2]), int(seeds[3]), int(batch_size), text, apply_enabled)
 
 
 class XiawanPromptAB:
@@ -615,11 +639,12 @@ class XiawanTiledVAEParams:
     CATEGORY = "Xiawan/Workflow Controls"
     def output(self, use_tiled_vae=True, tile_size=768, overlap=64, profile_use_tiled=None, profile_tile_size=None):
         use = _coerce_bool(use_tiled_vae)
-        ts = int(tile_size)
+        ts = max(256, int(tile_size))
         if profile_use_tiled is not None and _coerce_bool(profile_use_tiled) and use and profile_tile_size is not None:
-            ts = int(profile_tile_size)
+            ts = max(256, int(profile_tile_size))
+        overlap = max(0, min(int(overlap), ts // 4))
         adv = "Tiled VAE 开启：主路径将使用 tiled 编解码。" if use else "Tiled VAE 关闭：走普通编解码。"
-        return (use, ts, int(overlap), adv)
+        return (use, ts, overlap, adv)
 
 
 class XiawanQualityBoostParams:
@@ -670,15 +695,79 @@ class XiawanSaveMetaPack:
                 "negative_prompt": ("STRING", {"default": "", "multiline": True, "forceInput": True}),
                 "loaded_loras": ("STRING", {"default": "", "forceInput": True}),
             },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("checkpoint_name", "lora_syntax", "positive_prompt", "negative_prompt", "meta_summary")
     FUNCTION = "output"
     CATEGORY = "Xiawan/Workflow Controls"
-    def output(self, checkpoint_name="zukiAnimeILL_v50.safetensors", lora_syntax="<lora:xiawan_pro:0.9>", seed=0, steps=28, cfg=5.5, sampler_name="dpmpp_2m", scheduler="karras", width=832, height=1216, positive_prompt="", negative_prompt="", loaded_loras=""):
-        lora_out = str(loaded_loras).strip() if loaded_loras else str(lora_syntax)
-        if not lora_out:
-            lora_out = str(lora_syntax)
+    @staticmethod
+    def _prompt_node(prompt, node_id):
+        prompt_obj = prompt[0] if isinstance(prompt, list) and prompt else prompt
+        if not isinstance(prompt_obj, dict):
+            return {}
+        node = prompt_obj.get(str(node_id)) or prompt_obj.get(node_id)
+        return node.get("inputs", {}) if isinstance(node, dict) else {}
+
+    @staticmethod
+    def _workflow_info(extra_pnginfo):
+        info = extra_pnginfo[0] if isinstance(extra_pnginfo, list) and extra_pnginfo else extra_pnginfo
+        return info.get("workflow") if isinstance(info, dict) else None
+
+    @classmethod
+    def _anima_enabled(cls, prompt, extra_pnginfo):
+        workflow = cls._workflow_info(extra_pnginfo)
+        if isinstance(workflow, dict):
+            for node in workflow.get("nodes", []):
+                if not isinstance(node, dict) or node.get("type") not in ("GroupIgnoreManager", "GroupMuteManager"):
+                    continue
+                for group in (node.get("properties") or {}).get("groups", []):
+                    if isinstance(group, dict) and group.get("group_name") == "0-ii anima底图":
+                        return bool(group.get("enabled", False))
+        values = cls._prompt_node(prompt, 257)
+        anima = values.get("anima_enabled")
+        return bool(anima) if isinstance(anima, bool) else False
+
+    @staticmethod
+    def _first_value(values, *names):
+        for name in names:
+            value = values.get(name) if isinstance(values, dict) else None
+            if isinstance(value, (list, tuple)):
+                continue
+            if value is not None:
+                return value
+        return None
+
+    @classmethod
+    def _runtime_values(cls, prompt, extra_pnginfo):
+        anima = cls._anima_enabled(prompt, extra_pnginfo)
+        params = cls._prompt_node(prompt, 255 if anima else 113)
+        model_node = cls._prompt_node(prompt, 258 if anima else 8)
+        lora_node = cls._prompt_node(prompt, 261 if anima else 10)
+        checkpoint = cls._first_value(model_node, "diffusion_model" if anima else "ckpt_name")
+        sampler = cls._first_value(params, "采样器", "sampler_name")
+        scheduler = cls._first_value(params, "调度器", "scheduler")
+        steps = cls._first_value(params, "步数", "steps")
+        cfg = cls._first_value(params, "CFG", "cfg")
+        width = cls._first_value(params, "宽度", "width")
+        height = cls._first_value(params, "高度", "height")
+        lora = cls._first_value(lora_node, "text")
+        return checkpoint, lora, steps, cfg, sampler, scheduler, width, height
+
+    def output(self, checkpoint_name="", lora_syntax="", seed=0, steps=28, cfg=5.5, sampler_name="", scheduler="", width=832, height=1216, positive_prompt="", negative_prompt="", loaded_loras="", prompt=None, extra_pnginfo=None):
+        runtime = self._runtime_values(prompt, extra_pnginfo)
+        checkpoint_name = runtime[0] or checkpoint_name or "unselected"
+        loaded_loras = str(loaded_loras or runtime[1] or "").strip()
+        lora_out = loaded_loras or str(lora_syntax or "")
+        steps = runtime[2] if runtime[2] is not None else steps
+        cfg = runtime[3] if runtime[3] is not None else cfg
+        sampler_name = runtime[4] or sampler_name or "unselected"
+        scheduler = runtime[5] or scheduler or "unselected"
+        width = runtime[6] if runtime[6] is not None else width
+        height = runtime[7] if runtime[7] is not None else height
         summary = f"ckpt={checkpoint_name} | lora={lora_out} | seed={seed} | steps={steps} cfg={cfg} | {sampler_name}+{scheduler} | {width}x{height}"
         return (str(checkpoint_name), lora_out, str(positive_prompt or ""), str(negative_prompt or ""), summary)
 
@@ -940,9 +1029,8 @@ class XiawanAnyVAEDecode:
     def decode(self, samples, vae, use_tiled=False, tile_size=768, overlap=64):
         latent = samples["samples"]
         if _coerce_bool(use_tiled):
-            ts, ov = int(tile_size), int(overlap)
-            if ts < ov * 4:
-                ov = max(0, ts // 4)
+            ts = max(64, int(tile_size))
+            ov = max(0, min(int(overlap), ts // 4))
             try:
                 images = vae.decode_tiled(latent, tile_x=ts, tile_y=ts, overlap=ov)
             except TypeError:
@@ -970,8 +1058,10 @@ class XiawanAnyVAEEncode:
     CATEGORY = "Xiawan/Workflow Controls"
     def encode(self, pixels, vae, use_tiled=False, tile_size=768, overlap=64):
         if _coerce_bool(use_tiled):
+            ts = max(64, int(tile_size))
+            ov = max(0, min(int(overlap), ts // 4))
             try:
-                t = vae.encode_tiled(pixels, tile_x=int(tile_size), tile_y=int(tile_size), overlap=int(overlap))
+                t = vae.encode_tiled(pixels, tile_x=ts, tile_y=ts, overlap=ov)
             except TypeError:
                 t = vae.encode_tiled(pixels)
         else:

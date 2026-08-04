@@ -124,7 +124,6 @@ SEED_MODES = ["fixed", "random", "last"]
 GLOBAL_SEED_MODES = ["fixed", "random", "increase", "decrease", "last"]
 BASE_IMAGE_MODES = ["自采样", "图生图直通", "图生图重采样"]
 MAX_SEED = 0xffffffffffffffff
-_LAST_SEEDS = {}
 
 RESOLUTION_PRESETS = [
     "Custom",
@@ -243,22 +242,24 @@ def _coerce_seed(value, default=0):
     return max(0, min(MAX_SEED, seed))
 
 
-def _seed_key(namespace, unique_id):
-    return f"{namespace}:{unique_id or 'global'}"
+def _previous_seed(kwargs, default):
+    """Read the last seed from the workflow widget instead of process state."""
+    current = _value(kwargs, "current_seed", "当前Seed", default=None)
+    if current is None or (isinstance(current, str) and not current.strip()):
+        return _coerce_seed(default, default)
+    return _coerce_seed(current, default)
 
 
 def _resolve_seed(kwargs, namespace, default):
     fixed_seed = _coerce_seed(_value(kwargs, "种子值", "采样种子值", "种子", "采样种子", "seed", default=default), default)
     mode = _value(kwargs, "Seed模式", "seed_mode", default="fixed")
-    unique_id = kwargs.get("unique_id")
-    key = _seed_key(namespace, unique_id)
+    previous_seed = _previous_seed(kwargs, fixed_seed)
     if mode == "random":
         seed = random.randint(0, MAX_SEED)
     elif mode == "last":
-        seed = _LAST_SEEDS.get(key, fixed_seed)
+        seed = previous_seed
     else:
         seed = fixed_seed
-    _LAST_SEEDS[key] = seed
     return seed
 
 
@@ -273,9 +274,7 @@ def _seed_is_changed(kwargs):
 def _resolve_global_seed(kwargs):
     seed_value = _coerce_seed(_value(kwargs, "seed_value", "???", default=123456789), 123456789)
     operation = _value(kwargs, "operation", "??", default="fixed")
-    unique_id = kwargs.get("unique_id")
-    key = _seed_key("global_seed", unique_id)
-    last_seed = _LAST_SEEDS.get(key, seed_value)
+    last_seed = _previous_seed(kwargs, seed_value)
     if operation == "random":
         seed = random.randint(0, MAX_SEED)
     elif operation == "increase":
@@ -286,7 +285,6 @@ def _resolve_global_seed(kwargs):
         seed = last_seed
     else:
         seed = seed_value
-    _LAST_SEEDS[key] = seed
     return seed
 
 
@@ -2422,10 +2420,12 @@ class XiawanTiledVAEParams:
     CATEGORY = "Xiawan/Workflow Controls"
 
     def output(self, use_tiled_vae=True, tile_size=768, overlap=64):
+        tile_size = max(256, int(tile_size))
+        overlap = max(0, min(int(overlap), tile_size // 4))
         adv = "Tiled VAE 适合大图/低显存；tile 越大越快但更吃显存。"
         if not use_tiled_vae:
             adv = "已关闭 Tiled VAE：速度更快，大图可能 OOM。"
-        return (_coerce_bool(use_tiled_vae), int(tile_size), int(overlap), adv)
+        return (_coerce_bool(use_tiled_vae), tile_size, overlap, adv)
 
 NODE_CLASS_MAPPINGS = {
     "XiawanGlobalSeedManager": XiawanGlobalSeedManager,
