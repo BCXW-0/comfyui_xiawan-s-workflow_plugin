@@ -5,8 +5,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-R10 = ROOT / "workflows" / "Xiawan's Workflow ver.R-1.0.json"
 R11 = ROOT / "workflows" / "Xiawan's Workflow ver.R-1.1.json"
+R12 = ROOT / "workflows" / "Xiawan's Workflow ver.R-1.2.0.json"
 SEED_LINK_IDS = {92, 105, 117, 182, 323, 324, 325, 336, 344, 433, 535, 674}
 
 
@@ -19,7 +19,7 @@ def nodes_by_id(workflow):
 
 
 def test_release_structure_is_valid():
-    workflow = load(R11)
+    workflow = load(R12)
     nodes = nodes_by_id(workflow)
     node_ids = list(nodes)
     link_ids = [int(link[0]) for link in workflow["links"]]
@@ -46,8 +46,8 @@ def test_release_structure_is_valid():
 
 
 def test_release_preserves_geometry():
-    before = nodes_by_id(load(R10))
-    after = nodes_by_id(load(R11))
+    before = nodes_by_id(load(R11))
+    after = nodes_by_id(load(R12))
     assert set(before) == set(after)
     for node_id in before:
         assert before[node_id].get("pos") == after[node_id].get("pos")
@@ -55,14 +55,14 @@ def test_release_preserves_geometry():
 
 
 def test_seed_matrix_reaches_sampling_links():
-    workflow = load(R11)
+    workflow = load(R12)
     links = {int(link[0]): link for link in workflow["links"]}
     assert {links[link_id][1] for link_id in SEED_LINK_IDS} == {292}
     assert {links[link_id][2] for link_id in SEED_LINK_IDS} == {0}
 
 
 def test_release_is_a_clean_template():
-    nodes = nodes_by_id(load(R11))
+    nodes = nodes_by_id(load(R12))
     assert nodes[8]["widgets_values"][0] == ""
     assert nodes[9]["widgets_values"][0] == ""
     assert nodes[10]["widgets_values"][1] == ""

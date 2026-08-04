@@ -23,16 +23,16 @@ ComfyUI/custom_nodes/comfyui_xiawan's-workflow_plugin
 使用发布模板：
 
 ```text
-workflows/Xiawan's Workflow ver.R-1.1.1.json
+workflows/Xiawan's Workflow ver.R-1.2.0.json
 ```
 
-R-1.1.1 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
+R-1.2.0 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
 
 `Xiawan's Workflow.json` 是开发者本地运行配置，包含实际跑图时的模型、LoRA、提示词和输入图，不作为发布模板使用。
 
 ### 细化模型
 
-R-1.1.1 使用以下部位检测模型：
+R-1.2.0 使用以下部位检测模型：
 
 | 用途 | 文件名 |
 |---|---|
@@ -58,6 +58,13 @@ ComfyUI/models/ultralytics/bbox/
 4. 在参数区调整分辨率、Seed、采样步数、CFG、采样器和调度器。
 5. 先测试底图，再逐项开启放大或细化阶段。
 6. 低显存设备优先保持批次数量为 1，启用 Tiled VAE，并关闭不需要的阶段。
+
+### 智能 Tag 文档导入
+
+1. 打开 WeiLin 全局提示词 UI，进入“标签管理”的批量导入 Tag 窗口。
+2. 点击“智能法典分析”，选择 `.txt`、`.doc` 或 `.docx` 文件。
+3. TXT 可用 `#`/`##` 标记分类，也可直接按行提供 Tag；Tab、`||` 或单个逗号可分隔描述。Word 文档请保留标题层级，并将 Tag 放在对应说明文字之后。
+4. 导入完成后标签管理会自动刷新，并显示一级分类、二级分类和 Tag 数量。DOC 文件需要系统安装 LibreOffice；单个文件上限为 64 MB。
 
 ### 重要限制
 

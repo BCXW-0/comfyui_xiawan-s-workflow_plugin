@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from aiohttp import web
@@ -19,6 +20,11 @@ from .dao.dao import install_cloud_file_db
 from .fast_autocomplete.autocomplete import fuzzy_search
 from .history.collect_history_contl import *
 from .history.history_contl import *
+from .panel_server.intelligent_tag_import import (
+    ImportFormatError,
+    MAX_SOURCE_BYTES,
+    import_to_tags_database,
+)
 from .prompt_api.danbooru import *
 from .prompt_api.lora_info import *
 from .prompt_api.lora_networks import *
@@ -415,6 +421,50 @@ async def _run_sql_text(request):
         return web.Response(status=500)
 
     return web.json_response(result)
+
+
+@PromptServer.instance.routes.post(baseUrl + "prompt/intelligent_tag_import")
+async def _intelligent_tag_import(request):
+    """Parse and import a TXT, DOC, or DOCX tag library."""
+
+    try:
+        reader = await request.multipart()
+        file_field = await reader.next()
+        while file_field is not None and file_field.name != "file":
+            file_field = await reader.next()
+        if file_field is None or not file_field.filename:
+            return web.json_response(
+                {"code": 400, "message": "请选择 TXT、DOC 或 DOCX 文件"},
+                status=400,
+            )
+
+        chunks = []
+        total_size = 0
+        while True:
+            chunk = await file_field.read_chunk(1024 * 1024)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_SOURCE_BYTES:
+                return web.json_response(
+                    {"code": 400, "message": "文件超过 64 MB，无法导入"},
+                    status=400,
+                )
+            chunks.append(chunk)
+
+        result = await asyncio.to_thread(
+            import_to_tags_database,
+            file_field.filename,
+            b"".join(chunks),
+        )
+        return web.json_response({"code": 200, "data": result})
+    except ImportFormatError as exc:
+        return web.json_response({"code": 400, "message": str(exc)}, status=400)
+    except Exception as exc:
+        print(f"Intelligent tag import failed: {exc}")
+        return web.json_response(
+            {"code": 500, "message": f"导入失败：{exc}"}, status=500
+        )
 
 
 # 2025-05-06 新增 移动分类功能
