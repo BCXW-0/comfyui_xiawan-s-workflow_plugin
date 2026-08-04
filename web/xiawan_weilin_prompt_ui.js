@@ -114,20 +114,19 @@ function removeNodeBySeed(seed) {
   }
 }
 // 版本号，用于强制刷新缓存 - 修改此值可强制浏览器重新加载静态资源
-const WEILIN_VERSION = '1.0.1';
+const WEILIN_VERSION = '1.1.1';
 
 // 资源加载状态
 let resourcesLoaded = false;
-let resourcesLoading = false;
+let resourcesLoading = null;
 
 // 按需加载资源 - 只在用户首次打开编辑器时才加载
 function loadResourcesOnDemand() {
   // 如果资源已加载或正在加载，直接返回
-  if (resourcesLoaded || resourcesLoading) return Promise.resolve();
+  if (resourcesLoaded) return Promise.resolve();
+  if (resourcesLoading) return resourcesLoading;
   
-  resourcesLoading = true;
-  
-  return new Promise((resolve) => {
+  resourcesLoading = new Promise((resolve) => {
     let loadedCount = 0;
     const totalResources = 4;
     
@@ -157,7 +156,7 @@ function loadResourcesOnDemand() {
         if (hasVueApp) {
           console.log('[WeiLin] Vue app initialized, resources ready');
           resourcesLoaded = true;
-          resourcesLoading = false;
+          resourcesLoading = null;
           resolveCallback();
           return true;
         }
@@ -178,7 +177,7 @@ function loadResourcesOnDemand() {
           console.warn('[WeiLin] Vue app initialization timeout, proceeding anyway');
           clearInterval(pollInterval);
           resourcesLoaded = true;
-          resourcesLoading = false;
+          resourcesLoading = null;
           resolveCallback();
         }
       }, 100);
@@ -218,6 +217,8 @@ function loadResourcesOnDemand() {
     link2.onerror = checkAllLoaded;
     document.head.appendChild(link2);
   });
+
+  return resourcesLoading;
 }
 
 // 不再自动加载资源，改为按需加载
@@ -408,6 +409,20 @@ waitForApp((app) => {
         // 修复Bug：初始化时直接生成唯一UUID，防止被全局窗口(空ID)广播的消息意外覆盖
         let promptBoxRandomID = generateUUID();
         let loraStackRandomID = generateUUID();
+
+        const getNodeWidgetValue = (index) =>
+          nodeTextAreaList[index]?.value ?? nodeWidgetList[index]?.value ?? "";
+        const parseNodeWidgetJson = (index, fallback) => {
+          const rawValue = getNodeWidgetValue(index);
+          if (!rawValue || typeof rawValue !== "string") return fallback;
+
+          try {
+            return JSON.parse(rawValue);
+          } catch (error) {
+            console.warn(`[WeiLin] Invalid JSON in widget ${index}; using defaults`, error);
+            return fallback;
+          }
+        };
 
         // 监听lora数据变化，通知UI窗口同步
         if (nodeData.name === "WeiLinPromptUI" || nodeData.name === "WeiLinPromptUIOnlyLoraStack") {
@@ -791,8 +806,7 @@ waitForApp((app) => {
         // 添加按钮点击事件
         if (nodeData.name === "WeiLinPromptUI" || nodeData.name === "WeiLinPromptUIWithoutLora") {
           // 节点按钮点击事件 - 打开提示词编辑器
-          let promptOpenWidget = null;
-          promptOpenWidget = this.addWidget("button", localLanguage, '', async ($e) => {
+          this.addWidget("button", localLanguage, '', async ($e) => {
             // 先加载资源（如果还未加载）
             await loadResourcesOnDemand();
             
@@ -802,21 +816,21 @@ waitForApp((app) => {
             promptBoxRandomID = generateUUID();
             // console.log("register====>",promptBoxRandomID)
             let jsonData = {
-              prompt: promptOpenWidget._node.widgets[0].value,
+              prompt: getNodeWidgetValue(0),
               lora: [],
               temp_prompt: {},
               temp_lora: {},
             }
-            if (nodeData.name === "WeiLinPromptUI" && nodeTextAreaList[1] && nodeTextAreaList[1].value && nodeTextAreaList[1].value.length > 0) {
-              jsonData.lora = JSON.parse(nodeTextAreaList[1].value);
+            if (nodeData.name === "WeiLinPromptUI" && getNodeWidgetValue(1)) {
+              jsonData.lora = parseNodeWidgetJson(1, []);
             }
 
-            if (nodeTextAreaList[2] && nodeTextAreaList[2].value && nodeTextAreaList[2].value.length > 0) {
-              jsonData.temp_prompt = JSON.parse(nodeTextAreaList[2].value)
+            if (getNodeWidgetValue(2)) {
+              jsonData.temp_prompt = parseNodeWidgetJson(2, {});
             }
 
-            if (nodeData.name === "WeiLinPromptUI" && nodeTextAreaList[3] && nodeTextAreaList[3].value && nodeTextAreaList[3].value.length > 0) {
-              jsonData.temp_lora = JSON.parse(nodeTextAreaList[3].value)
+            if (nodeData.name === "WeiLinPromptUI" && getNodeWidgetValue(3)) {
+              jsonData.temp_lora = parseNodeWidgetJson(3, {})
             }
 
             const data = JSON.stringify(jsonData)

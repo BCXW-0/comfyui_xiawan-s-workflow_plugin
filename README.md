@@ -23,16 +23,16 @@ ComfyUI/custom_nodes/comfyui_xiawan's-workflow_plugin
 使用发布模板：
 
 ```text
-workflows/Xiawan's Workflow ver.R-1.1.json
+workflows/Xiawan's Workflow ver.R-1.1.1.json
 ```
 
-R-1.1 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
+R-1.1.1 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
 
 `Xiawan's Workflow.json` 是开发者本地运行配置，包含实际跑图时的模型、LoRA、提示词和输入图，不作为发布模板使用。
 
 ### 细化模型
 
-R-1.1 使用以下部位检测模型：
+R-1.1.1 使用以下部位检测模型：
 
 | 用途 | 文件名 |
 |---|---|
