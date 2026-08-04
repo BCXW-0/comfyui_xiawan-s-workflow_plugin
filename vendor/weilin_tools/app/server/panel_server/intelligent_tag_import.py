@@ -1,4 +1,4 @@
-"""Import structured tag libraries from text and Word documents.
+"""Import structured tag libraries from text and Word-compatible documents.
 
 The source documents used by the tag library are mostly manually formatted.
 This module therefore uses Word outline levels where available and falls back
@@ -8,11 +8,8 @@ to the document's title/tag paragraph rhythm for the records below a category.
 from __future__ import annotations
 
 import io
-import os
-import shutil
 import sqlite3
-import subprocess
-import tempfile
+import struct
 import time
 import unicodedata
 import uuid
@@ -356,41 +353,271 @@ def _records_from_txt(data: bytes, filename: str) -> tuple[OrderedDict, list[dic
     return categories, records
 
 
-def _find_soffice() -> str | None:
-    candidates = [
-        shutil.which("soffice"),
-        shutil.which("libreoffice"),
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-    return next((candidate for candidate in candidates if candidate and os.path.isfile(candidate)), None)
+_CFB_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_CFB_FREESECT = 0xFFFFFFFF
+_CFB_ENDOFCHAIN = 0xFFFFFFFE
 
 
-def _convert_doc_to_docx(data: bytes, filename: str) -> bytes:
-    soffice = _find_soffice()
-    if not soffice:
-        raise ImportFormatError("解析 DOC 需要安装 LibreOffice，或先另存为 DOCX")
+class _CompoundFileReader:
+    """Read streams from legacy binary Word-compatible compound documents."""
 
-    with tempfile.TemporaryDirectory(prefix="tag_import_") as temp_dir:
-        source_path = Path(temp_dir) / (Path(filename).stem + ".doc")
-        source_path.write_bytes(data)
-        command = [
-            soffice,
-            "--headless",
-            "--convert-to",
-            "docx",
-            "--outdir",
-            temp_dir,
-            str(source_path),
+    def __init__(self, data: bytes):
+        if len(data) < 512 or data[:8] != _CFB_SIGNATURE:
+            raise ImportFormatError("DOC 文件不是有效的 OLE 文档")
+        self.data = data
+        self.sector_size = 1 << self._u16(30)
+        self.mini_sector_size = 1 << self._u16(32)
+        if self.sector_size not in (512, 4096) or self.mini_sector_size != 64:
+            raise ImportFormatError("DOC 文件使用了不支持的 OLE 扇区格式")
+
+        self.mini_stream_cutoff = self._u32(56)
+        self.fat = self._load_fat()
+        directory = self._read_regular(self._i32(48), None)
+        self.entries = self._parse_directory(directory)
+        self.root = next(
+            (entry for entry in self.entries if entry["type"] == 5), None
+        )
+        if self.root is None:
+            raise ImportFormatError("DOC 文件缺少 OLE 根目录")
+        self.mini_fat = self._load_mini_fat()
+
+    def _u16(self, offset: int) -> int:
+        return struct.unpack_from("<H", self.data, offset)[0]
+
+    def _u32(self, offset: int) -> int:
+        return struct.unpack_from("<I", self.data, offset)[0]
+
+    def _i32(self, offset: int) -> int:
+        return struct.unpack_from("<i", self.data, offset)[0]
+
+    def _sector(self, sector_id: int) -> bytes:
+        if sector_id < 0:
+            raise ImportFormatError("DOC 文件的 OLE 扇区链无效")
+        start = (sector_id + 1) * self.sector_size
+        end = start + self.sector_size
+        if end > len(self.data):
+            raise ImportFormatError("DOC 文件的 OLE 扇区超出文件范围")
+        return self.data[start:end]
+
+    def _chain(self, start: int, table: list[int]) -> list[int]:
+        if start in (-1, _CFB_ENDOFCHAIN, _CFB_FREESECT):
+            return []
+        result = []
+        current = start
+        seen = set()
+        while current not in (_CFB_ENDOFCHAIN, _CFB_FREESECT):
+            if current < 0 or current in seen or current >= len(table):
+                raise ImportFormatError("DOC 文件的 OLE 流链无效")
+            seen.add(current)
+            result.append(current)
+            current = table[current]
+        return result
+
+    def _load_fat(self) -> list[int]:
+        difat = [
+            self._u32(76 + index * 4)
+            for index in range(109)
+            if self._u32(76 + index * 4) != _CFB_FREESECT
         ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, timeout=120)
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise ImportFormatError("DOC 转换失败，请确认文件可以被 Word 或 LibreOffice 打开") from exc
-        output_path = Path(temp_dir) / (source_path.stem + ".docx")
-        if not output_path.is_file():
-            raise ImportFormatError("DOC 转换后没有生成可读取的 DOCX")
-        return output_path.read_bytes()
+        current = self._i32(68)
+        for _ in range(self._u32(72)):
+            sector = self._sector(current)
+            values = struct.unpack("<" + "I" * (self.sector_size // 4), sector)
+            difat.extend(value for value in values[:-1] if value != _CFB_FREESECT)
+            current = values[-1]
+
+        fat_ids = difat[: self._u32(44)]
+        if len(fat_ids) != self._u32(44):
+            raise ImportFormatError("DOC 文件缺少完整的 OLE FAT")
+        fat = []
+        for sector_id in fat_ids:
+            sector = self._sector(sector_id)
+            fat.extend(struct.unpack("<" + "I" * (self.sector_size // 4), sector))
+        return fat
+
+    def _read_regular(self, start: int, size: int | None) -> bytes:
+        chunks = [self._sector(sector_id) for sector_id in self._chain(start, self.fat)]
+        result = b"".join(chunks)
+        return result if size is None else result[:size]
+
+    @staticmethod
+    def _parse_directory(data: bytes) -> list[dict]:
+        entries = []
+        for offset in range(0, len(data) - 127, 128):
+            name_length = struct.unpack_from("<H", data, offset + 64)[0]
+            entry_type = data[offset + 66]
+            if not name_length or entry_type == 0:
+                continue
+            raw_name = data[offset : offset + max(0, name_length - 2)]
+            name = raw_name.decode("utf-16le", "replace")
+            entries.append(
+                {
+                    "name": name,
+                    "type": entry_type,
+                    "start": struct.unpack_from("<i", data, offset + 116)[0],
+                    "size": struct.unpack_from("<Q", data, offset + 120)[0],
+                }
+            )
+        return entries
+
+    def _load_mini_fat(self) -> list[int]:
+        start = self._i32(60)
+        count = self._u32(64)
+        if count == 0 or start in (-1, _CFB_ENDOFCHAIN):
+            return []
+        raw = self._read_regular(start, count * self.sector_size)
+        return list(struct.unpack("<" + "I" * (len(raw) // 4), raw))
+
+    def _read_mini(self, entry: dict) -> bytes:
+        root_stream = self._read_regular(self.root["start"], self.root["size"])
+        chunks = []
+        for sector_id in self._chain(entry["start"], self.mini_fat):
+            start = sector_id * self.mini_sector_size
+            chunks.append(root_stream[start : start + self.mini_sector_size])
+        return b"".join(chunks)[: entry["size"]]
+
+    def stream(self, name: str) -> bytes:
+        entry = next(
+            (
+                item
+                for item in self.entries
+                if item["type"] == 2 and item["name"].casefold() == name.casefold()
+            ),
+            None,
+        )
+        if entry is None:
+            raise ImportFormatError(f"DOC 文件缺少 {name} 流")
+        if entry["size"] < self.mini_stream_cutoff:
+            return self._read_mini(entry)
+        return self._read_regular(entry["start"], entry["size"])
+
+
+def _legacy_piece_table(word: bytes, table: bytes) -> list[str]:
+    csw = struct.unpack_from("<H", word, 32)[0]
+    position = 34 + csw * 2
+    cslw = struct.unpack_from("<H", word, position)[0]
+    position += 2 + cslw * 4
+    cb_rg_fc_lcb = struct.unpack_from("<H", word, position)[0]
+    position += 2
+
+    # fcClx is normally pair 33; scanning also covers compatible WPS files.
+    candidate_indices = [33] + [index for index in range(cb_rg_fc_lcb) if index != 33]
+    for index in candidate_indices:
+        if position + (index + 1) * 8 > len(word):
+            continue
+        fc, lcb = struct.unpack_from("<II", word, position + index * 8)
+        if not lcb or fc + lcb > len(table):
+            continue
+        clx = table[fc : fc + lcb]
+        clx_position = 0
+        while clx_position < len(clx) and clx[clx_position] == 1:
+            if clx_position + 5 > len(clx):
+                break
+            size = struct.unpack_from("<I", clx, clx_position + 1)[0]
+            clx_position += 5 + size
+        if clx_position + 5 > len(clx) or clx[clx_position] != 2:
+            continue
+        piece_table_size = struct.unpack_from("<I", clx, clx_position + 1)[0]
+        piece_table = clx[clx_position + 5 : clx_position + 5 + piece_table_size]
+        if len(piece_table) != piece_table_size or piece_table_size < 16:
+            continue
+        if (piece_table_size - 4) % 12:
+            continue
+        piece_count = (piece_table_size - 4) // 12
+        cps = [
+            struct.unpack_from("<I", piece_table, offset * 4)[0]
+            for offset in range(piece_count + 1)
+        ]
+        if any(end < start for start, end in zip(cps, cps[1:])):
+            continue
+
+        pieces = []
+        pcd_start = 4 * (piece_count + 1)
+        for piece_index, (cp_start, cp_end) in enumerate(zip(cps, cps[1:])):
+            pcd_offset = pcd_start + piece_index * 8
+            fc_raw = struct.unpack_from("<I", piece_table, pcd_offset + 2)[0]
+            compressed = bool(fc_raw & 0x40000000)
+            fc_value = fc_raw & 0x3FFFFFFF
+            char_count = cp_end - cp_start
+            if compressed:
+                fc_value >>= 1
+                raw = word[fc_value : fc_value + char_count]
+                text = raw.decode("cp1252", "replace")
+            else:
+                raw = word[fc_value : fc_value + char_count * 2]
+                text = raw.decode("utf-16le", "replace")
+            if len(raw) != (char_count if compressed else char_count * 2):
+                break
+            pieces.append(text)
+        else:
+            return pieces
+    raise ImportFormatError("DOC 文件的 Word 文本结构无法解析")
+
+
+def _extract_doc_text(data: bytes) -> str:
+    compound = _CompoundFileReader(data)
+    word = compound.stream("WordDocument")
+    if len(word) < 34:
+        raise ImportFormatError("DOC 文件的 Word 文本结构不完整")
+    flags = struct.unpack_from("<H", word, 10)[0]
+    if flags & 0x0100:
+        raise ImportFormatError("DOC 文件已加密，无法进行智能分析")
+    table_name = "1Table" if flags & 0x0200 else "0Table"
+    table = compound.stream(table_name)
+    try:
+        text = "".join(_legacy_piece_table(word, table))
+    except (IndexError, struct.error, UnicodeError) as exc:
+        raise ImportFormatError("DOC 文件的 Word 文本结构无法解析") from exc
+    return (
+        text.replace("\x07", "\r")
+        .replace("\x0c", "\r")
+        .replace("\x0b", " ")
+        .replace("\x08", "")
+    )
+
+
+def _legacy_doc_tag_like(text: str) -> bool:
+    if not text:
+        return False
+    if any(marker in text.lower() for marker in (",", "::", "{{", "}}", "[[", "]]", "artist:", "1girl", "1boy")):
+        return True
+    ascii_count = sum(char.isascii() and char.isalpha() for char in text)
+    has_cjk = any("\u3400" <= char <= "\u9fff" for char in text)
+    return len(text) >= 32 and ascii_count >= 12 and not has_cjk
+
+
+def _records_from_doc(data: bytes, filename: str) -> tuple[OrderedDict, list[dict]]:
+    text = _extract_doc_text(data)
+    group_name = _clean_text(Path(filename).stem) or "DOC 导入"
+    subgroup_name = "默认"
+    categories: OrderedDict = OrderedDict()
+    records: list[dict] = []
+    pending_desc = ""
+
+    for raw_line in text.splitlines():
+        line = _clean_text(raw_line)
+        if not line:
+            continue
+        _new_category(categories, group_name, subgroup_name)
+        if _legacy_doc_tag_like(line):
+            records.append(
+                {
+                    "group": group_name,
+                    "subgroup": subgroup_name,
+                    "text": line,
+                    "desc": pending_desc,
+                }
+            )
+            pending_desc = ""
+        else:
+            pending_desc = _clean_text(
+                " ".join(part for part in (pending_desc, line) if part)
+            )
+
+    if not records:
+        raise ImportFormatError("DOC 中未找到可导入的 Tag 内容")
+    _drop_empty_default_categories(categories, records)
+    return categories, records
 
 
 def parse_source(filename: str, data: bytes) -> tuple[list[str], dict]:
@@ -407,7 +634,7 @@ def parse_source(filename: str, data: bytes) -> tuple[list[str], dict]:
         elif b"\x00" not in data[:4096]:
             categories, records = _records_from_txt(data, filename)
         else:
-            categories, records = _records_from_docx(_convert_doc_to_docx(data, filename))
+            categories, records = _records_from_doc(data, filename)
     else:
         raise ImportFormatError("仅支持 TXT、DOC 或 DOCX 文件")
 

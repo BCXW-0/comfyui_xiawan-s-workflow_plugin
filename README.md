@@ -23,16 +23,16 @@ ComfyUI/custom_nodes/comfyui_xiawan's-workflow_plugin
 使用发布模板：
 
 ```text
-workflows/Xiawan's Workflow ver.R-1.2.0.json
+workflows/Xiawan's Workflow ver.R-1.2.1.json
 ```
 
-R-1.2.0 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
+R-1.2.1 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
 
 `Xiawan's Workflow.json` 是开发者本地运行配置，包含实际跑图时的模型、LoRA、提示词和输入图，不作为发布模板使用。
 
 ### 细化模型
 
-R-1.2.0 使用以下部位检测模型：
+R-1.2.1 使用以下部位检测模型：
 
 | 用途 | 文件名 |
 |---|---|
@@ -63,8 +63,8 @@ ComfyUI/models/ultralytics/bbox/
 
 1. 打开 WeiLin 全局提示词 UI，进入“标签管理”的批量导入 Tag 窗口。
 2. 点击“智能法典分析”，选择 `.txt`、`.doc` 或 `.docx` 文件。
-3. TXT 可用 `#`/`##` 标记分类，也可直接按行提供 Tag；Tab、`||` 或单个逗号可分隔描述。Word 文档请保留标题层级，并将 Tag 放在对应说明文字之后。
-4. 导入完成后标签管理会自动刷新，并显示一级分类、二级分类和 Tag 数量。DOC 文件需要系统安装 LibreOffice；单个文件上限为 64 MB。
+3. TXT 可用 `#`/`##` 标记分类，也可直接按行提供 Tag；Tab、`||` 或单个逗号可分隔描述。DOCX 请保留标题层级；旧式 DOC 及常见 Word/WPS 兼容格式由插件直接读取正文，并将文件名作为一级分类、未标注层级的内容放入默认二级分类。
+4. 导入完成后标签管理会自动刷新，并显示一级分类、二级分类和 Tag 数量，同时弹出导入成功提示。DOC、DOCX 和 TXT 均由插件内置解析；单个文件上限为 64 MB。
 
 ### 重要限制
 

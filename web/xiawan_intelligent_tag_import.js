@@ -30,12 +30,15 @@
         throw new Error(payload.message || '导入失败');
       }
       const data = payload.data || {};
+      window.postMessage({ type: 'weilin_prompt_ui_tag_manager_refresh' }, '*');
       showStatus(
         host,
-        `已导入 ${data.groups || 0} 个一级分类、${data.subgroups || 0} 个二级分类、${data.tags || 0} 个 Tag`,
+        `导入成功，标签管理面板已自动刷新。请返回标签管理面板（${data.groups || 0} 个一级分类、${data.subgroups || 0} 个二级分类、${data.tags || 0} 个 Tag）`,
         false,
       );
-      window.postMessage({ type: 'weilin_prompt_ui_tag_manager_refresh' }, '*');
+      window.setTimeout(() => {
+        window.alert('导入成功，标签管理面板已自动刷新，请返回标签管理面板查看。');
+      }, 0);
     } catch (error) {
       console.error('[Xiawan] Intelligent tag import failed:', error);
       showStatus(host, error.message || '导入失败', true);
