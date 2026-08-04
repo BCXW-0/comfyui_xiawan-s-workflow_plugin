@@ -114,7 +114,7 @@ function removeNodeBySeed(seed) {
   }
 }
 // 版本号，用于强制刷新缓存 - 修改此值可强制浏览器重新加载静态资源
-const WEILIN_VERSION = '1.2.1';
+const WEILIN_VERSION = '1.2.2';
 
 // 资源加载状态
 let resourcesLoaded = false;

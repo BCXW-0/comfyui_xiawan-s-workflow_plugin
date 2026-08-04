@@ -45,7 +45,7 @@ class SimpleImageCompare(PreviewImage):
                        prompt=None,
                        extra_pnginfo=None):
 
-        result = {"ui": {"a_images": [], "b_images": []}}
+        result = {"ui": {"images": [], "a_images": [], "b_images": []}}
 
         if not enabled:
             return result
@@ -59,5 +59,9 @@ class SimpleImageCompare(PreviewImage):
             result['ui']['b_images'] = self.save_images(
                 image_b, filename_prefix, prompt, extra_pnginfo
             )['ui']['images']
+
+        # Keep the standard PreviewImage payload as a fallback for frontends
+        # that do not load the Xiawan comparison widget.
+        result['ui']['images'] = result['ui']['a_images'] + result['ui']['b_images']
 
         return result
