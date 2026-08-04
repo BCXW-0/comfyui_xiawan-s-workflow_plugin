@@ -126,38 +126,29 @@ function installCompareWidget(node) {
     "display:flex",
     "align-items:center",
     "gap:8px",
-    "min-height:28px",
+    "min-height:0",
   ].join(";");
-
-  const slider = makeElement("input", "xiawan-compare-slider");
-  slider.type = "range";
-  slider.min = "0";
-  slider.max = "100";
-  slider.value = "50";
-  slider.title = "拖动滑块调整图像 A 的显示范围";
-  slider.style.cssText = "flex:1 1 auto; min-width:0; accent-color:#58a6ff;";
-
-  const sliderValue = makeElement("span", "xiawan-compare-slider-value");
-  sliderValue.style.cssText = "min-width:34px; text-align:right; color:#8b949e;";
 
   const batchSelect = makeElement("select", "xiawan-compare-batch");
   batchSelect.title = "选择批次结果";
   batchSelect.style.cssText = "display:none; max-width:92px; background:#21262d; color:#e6edf3; border:1px solid #484f58; border-radius:3px;";
 
-  controls.append(slider, sliderValue, batchSelect);
+  controls.append(batchSelect);
   root.append(stage, controls);
+  stage.title = "将鼠标移到预览区域，自动调整纵向分割线";
+  stage.style.cursor = "col-resize";
 
   const state = {
     aImages: [],
     bImages: [],
     index: 0,
     cacheKey: 0,
+    splitPercent: 50,
   };
 
-  function setSlider(value) {
+  function setDividerPosition(value) {
     const normalized = Math.max(0, Math.min(100, Number(value) || 0));
-    slider.value = String(normalized);
-    sliderValue.textContent = `${Math.round(normalized)}%`;
+    state.splitPercent = normalized;
     divider.style.left = `${normalized}%`;
     imageA.style.clipPath = `inset(0 ${100 - normalized}% 0 0)`;
   }
@@ -194,7 +185,7 @@ function installCompareWidget(node) {
     empty.style.display = hasA || hasB ? "none" : "grid";
     if (hasA) imageA.src = imageUrl(a, state.cacheKey);
     if (hasB) imageB.src = imageUrl(b, state.cacheKey);
-    setSlider(slider.value);
+    setDividerPosition(state.splitPercent);
   }
 
   function update(message) {
@@ -202,6 +193,7 @@ function installCompareWidget(node) {
     state.bImages = imageList(message?.b_images);
     state.index = 0;
     state.cacheKey = Date.now();
+    state.splitPercent = 50;
     updateBatchOptions();
     renderPair();
 
@@ -217,17 +209,25 @@ function installCompareWidget(node) {
     state.bImages = [];
     state.index = 0;
     state.cacheKey = Date.now();
+    state.splitPercent = 50;
     updateBatchOptions();
     renderPair();
     node.graph?.setDirtyCanvas?.(true, true);
   }
 
-  slider.addEventListener("input", () => setSlider(slider.value));
+  stage.addEventListener("pointermove", (event) => {
+    const rect = stage.getBoundingClientRect();
+    if (!rect.width) return;
+    setDividerPosition(((event.clientX - rect.left) / rect.width) * 100);
+    event.stopPropagation();
+  });
+  stage.addEventListener("pointerdown", stopCanvasEvent);
+  stage.addEventListener("wheel", stopCanvasEvent);
   batchSelect.addEventListener("change", () => {
     state.index = Number(batchSelect.value) || 0;
     renderPair();
   });
-  for (const element of [slider, batchSelect]) {
+  for (const element of [batchSelect]) {
     element.addEventListener("mousedown", stopCanvasEvent);
     element.addEventListener("pointerdown", stopCanvasEvent);
     element.addEventListener("wheel", stopCanvasEvent);
@@ -242,7 +242,7 @@ function installCompareWidget(node) {
   node.__xiawanCompareWidget = widget;
   node.__xiawanCompareUpdate = update;
   node.__xiawanCompareUpdateBase = updateBase;
-  setSlider(50);
+  setDividerPosition(50);
   return widget;
 }
 

@@ -24,7 +24,7 @@ class SimpleImageCompare(PreviewImage):
     FUNCTION = "compare_images"
     OUTPUT_NODE = True
     CATEGORY = "image"
-    DESCRIPTION = "通过滑动对比两张图像"
+    DESCRIPTION = "将鼠标移至预览区域，自动调整纵向分割线对比两张图像"
 
     def check_lazy_status(self, enabled=False, image_a=None, image_b=None, **kwargs):
         if not enabled:
