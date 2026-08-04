@@ -5,7 +5,7 @@ import sys
 import types
 
 
-def test_compare_returns_standard_and_split_image_payload(monkeypatch):
+def test_compare_returns_split_image_payload_without_standard_thumbnails(monkeypatch):
     preview_base = type("PreviewImage", (), {})
     monkeypatch.setitem(sys.modules, "nodes", types.SimpleNamespace(PreviewImage=preview_base))
 
@@ -30,10 +30,10 @@ def test_compare_returns_standard_and_split_image_payload(monkeypatch):
 
     assert payload["ui"]["a_images"] == saved["image_a"]
     assert payload["ui"]["b_images"] == saved["image_b"]
-    assert payload["ui"]["images"] == saved["image_a"] + saved["image_b"]
+    assert payload["ui"]["images"] == []
 
     partial = compare.compare_images(enabled=True, image_a="image_a")
-    assert partial["ui"]["images"] == saved["image_a"]
+    assert partial["ui"]["images"] == []
     assert partial["ui"]["b_images"] == []
 
 

@@ -12,6 +12,7 @@ from uuid_extensions import uuid7
 
 from ..cloud_warehouse.save_history import save_package_path
 from ..user_init.user_init import read_init_file
+from .db_health import get_check_mode, get_db_file_signature
 
 
 def getUUID():
@@ -21,6 +22,7 @@ def getUUID():
 # 修改连接池为异步版本
 _connection_pool = {}
 _connection_lock = asyncio.Lock()
+_db_check_cache = {}
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -68,7 +70,13 @@ def check_and_repair_db(db_path: str, db_type: str = None) -> bool:
     if not os.path.exists(db_path):
         return True  # 文件不存在，不需要修复
 
-    file_size_mb = os.path.getsize(db_path) / (1024 * 1024)
+    file_size_bytes = os.path.getsize(db_path)
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    check_mode = get_check_mode(file_size_bytes)
+    signature = get_db_file_signature(db_path)
+    if signature is not None and _db_check_cache.get(db_path) == (signature, check_mode):
+        return True
+
     print(f"检查数据库: {db_path} ({file_size_mb:.1f} MB)")
 
     try:
@@ -89,23 +97,19 @@ def check_and_repair_db(db_path: str, db_type: str = None) -> bool:
         conn = sqlite3.connect(db_path, timeout=30)
         cursor = conn.cursor()
 
-        # 先尝试 WAL checkpoint 回放未提交的 WAL 日志
-        try:
-            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.commit()
-        except sqlite3.Error:
-            pass  # WAL 不是必需的
-
-        # 对大数据库使用 quick_check（快得多），小数据库用 integrity_check
-        if file_size_mb > 100:
-            print(f"  大数据库 ({file_size_mb:.1f} MB)，使用 quick_check...")
-            cursor.execute("PRAGMA quick_check")
+        # Routine reads should not force a blocking WAL checkpoint.
+        if check_mode == "quick":
+            print(f"  Large database ({file_size_mb:.1f} MB), using quick_check(1)...")
+            cursor.execute("PRAGMA quick_check(1)")
         else:
             cursor.execute("PRAGMA integrity_check")
         result = cursor.fetchone()
         conn.close()
 
         if result and result[0] == "ok":
+            signature = get_db_file_signature(db_path)
+            if signature is not None:
+                _db_check_cache[db_path] = (signature, check_mode)
             print(f"  数据库完整性检查通过")
             return True
 
@@ -124,6 +128,8 @@ def repair_database(db_path: str) -> bool:
     """尝试修复损坏的数据库"""
     import shutil
     import time
+
+    _db_check_cache.pop(db_path, None)
 
     try:
         # 尝试方式1: 使用 .recover 命令导出可恢复的数据
@@ -1187,6 +1193,8 @@ async def _reconnect_after_error(db_type: str) -> aiosqlite.Connection:
 def force_repair_database(db_path: str) -> bool:
     """强制修复数据库（用于运行时错误恢复）"""
     import time
+
+    _db_check_cache.pop(db_path, None)
 
     try:
         # 关闭所有可能的连接
