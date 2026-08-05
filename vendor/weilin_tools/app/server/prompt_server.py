@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from aiohttp import web
@@ -19,6 +20,11 @@ from .dao.dao import install_cloud_file_db
 from .fast_autocomplete.autocomplete import fuzzy_search
 from .history.collect_history_contl import *
 from .history.history_contl import *
+from .panel_server.intelligent_tag_import import (
+    ImportFormatError,
+    MAX_SOURCE_BYTES,
+    import_to_tags_database,
+)
 from .prompt_api.danbooru import *
 from .prompt_api.lora_info import *
 from .prompt_api.lora_networks import *
@@ -227,7 +233,8 @@ async def _upload_image(request):
 @PromptServer.instance.routes.get(baseUrl + "prompt/get_group_tags")
 async def _get_group_tags(request):
     try:
-        data = await get_group_tags()  # 添加await
+        include_tags = request.rel_url.query.get("include_tags", "0") == "1"
+        data = await get_group_tags(include_tags=include_tags)
         return web.json_response({"data": data})
     except Exception as e:
         print(f"Error: {e}")
@@ -417,6 +424,50 @@ async def _run_sql_text(request):
     return web.json_response(result)
 
 
+@PromptServer.instance.routes.post(baseUrl + "prompt/intelligent_tag_import")
+async def _intelligent_tag_import(request):
+    """Parse and import a TXT, DOC, or DOCX tag library."""
+
+    try:
+        reader = await request.multipart()
+        file_field = await reader.next()
+        while file_field is not None and file_field.name != "file":
+            file_field = await reader.next()
+        if file_field is None or not file_field.filename:
+            return web.json_response(
+                {"code": 400, "message": "请选择 TXT、DOC 或 DOCX 文件"},
+                status=400,
+            )
+
+        chunks = []
+        total_size = 0
+        while True:
+            chunk = await file_field.read_chunk(1024 * 1024)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_SOURCE_BYTES:
+                return web.json_response(
+                    {"code": 400, "message": "文件超过 64 MB，无法导入"},
+                    status=400,
+                )
+            chunks.append(chunk)
+
+        result = await asyncio.to_thread(
+            import_to_tags_database,
+            file_field.filename,
+            b"".join(chunks),
+        )
+        return web.json_response({"code": 200, "data": result})
+    except ImportFormatError as exc:
+        return web.json_response({"code": 400, "message": str(exc)}, status=400)
+    except Exception as exc:
+        print(f"Intelligent tag import failed: {exc}")
+        return web.json_response(
+            {"code": 500, "message": f"导入失败：{exc}"}, status=500
+        )
+
+
 # 2025-05-06 新增 移动分类功能
 
 
@@ -487,6 +538,21 @@ async def _get_tag_tags(request):
         return web.Response(status=500)
 
     return web.json_response(resp)
+
+
+@PromptServer.instance.routes.post(baseUrl + "prompt/get_tag_tags_page")
+async def _get_tag_tags_page(request):
+    try:
+        data = await request.json()
+        page = int(data.get("page", 1))
+        page_size = int(data.get("page_size", 200))
+        result = await get_tag_tags_page(data["g_uuid"], page, page_size)
+        return web.json_response(result)
+    except (KeyError, TypeError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        print(f"Error: {e}")
+        return web.Response(status=500)
 
 
 @PromptServer.instance.routes.post(baseUrl + "prompt/search_tags")

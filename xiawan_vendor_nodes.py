@@ -149,6 +149,36 @@ class XiawanVRAMDebug:
         return {"ui": {"text": [f"{before:,}x{after:,}"]}, "result": (any_input, image_pass, model_pass, before, after)}
 
 
+class XiawanBaseImagePreview(XiawanVRAMDebug):
+    """Keep the base-image passthrough while publishing an early UI preview."""
+
+    OUTPUT_NODE = True
+
+    def __init__(self):
+        super().__init__()
+        from nodes import PreviewImage
+
+        self._preview_image = PreviewImage()
+
+    def cleanup(self, gc_collect, empty_cache, unload_all_models, image_pass=None, model_pass=None, any_input=None):
+        result = super().cleanup(
+            gc_collect,
+            empty_cache,
+            unload_all_models,
+            image_pass=image_pass,
+            model_pass=model_pass,
+            any_input=any_input,
+        )
+        preview = []
+        if image_pass is not None and len(image_pass) > 0:
+            preview = self._preview_image.save_images(
+                image_pass,
+                filename_prefix="xiawan_base_preview.",
+            )["ui"]["images"]
+        result["ui"]["xiawan_base_images"] = preview
+        return result
+
+
 class XiawanWeiLinPromptUIWithoutLora:
     @classmethod
     def IS_CHANGED(cls, auto_random, **kwargs):
@@ -237,6 +267,7 @@ def load_vendor_nodes():
         "easy conditioningIndexSwitch": XiawanConditioningIndexSwitch,
         "JoinStrings": XiawanJoinStrings,
         "VRAM_Debug": XiawanVRAMDebug,
+        "XiawanBaseImagePreview": XiawanBaseImagePreview,
         "WeiLinPromptUIWithoutLora": XiawanWeiLinPromptUIWithoutLora,
     }
     displays = {
@@ -244,6 +275,7 @@ def load_vendor_nodes():
         "easy conditioningIndexSwitch": "Xiawan Conditioning Index Switch",
         "JoinStrings": "Xiawan Join Strings",
         "VRAM_Debug": "Xiawan VRAM Debug",
+        "XiawanBaseImagePreview": "Xiawan Base Image Preview",
         "WeiLinPromptUIWithoutLora": "WeiLin 提示词编辑器",
     }
 

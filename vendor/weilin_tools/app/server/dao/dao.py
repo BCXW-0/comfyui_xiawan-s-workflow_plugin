@@ -12,6 +12,7 @@ from uuid_extensions import uuid7
 
 from ..cloud_warehouse.save_history import save_package_path
 from ..user_init.user_init import read_init_file
+from .db_health import get_check_mode, get_db_file_signature
 
 
 def getUUID():
@@ -21,6 +22,9 @@ def getUUID():
 # 修改连接池为异步版本
 _connection_pool = {}
 _connection_lock = asyncio.Lock()
+_db_check_cache = {}
+_database_ready = set()
+_database_init_lock = asyncio.Lock()
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -68,7 +72,13 @@ def check_and_repair_db(db_path: str, db_type: str = None) -> bool:
     if not os.path.exists(db_path):
         return True  # 文件不存在，不需要修复
 
-    file_size_mb = os.path.getsize(db_path) / (1024 * 1024)
+    file_size_bytes = os.path.getsize(db_path)
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    check_mode = get_check_mode(file_size_bytes)
+    signature = get_db_file_signature(db_path)
+    if signature is not None and _db_check_cache.get(db_path) == (signature, check_mode):
+        return True
+
     print(f"检查数据库: {db_path} ({file_size_mb:.1f} MB)")
 
     try:
@@ -89,23 +99,19 @@ def check_and_repair_db(db_path: str, db_type: str = None) -> bool:
         conn = sqlite3.connect(db_path, timeout=30)
         cursor = conn.cursor()
 
-        # 先尝试 WAL checkpoint 回放未提交的 WAL 日志
-        try:
-            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.commit()
-        except sqlite3.Error:
-            pass  # WAL 不是必需的
-
-        # 对大数据库使用 quick_check（快得多），小数据库用 integrity_check
-        if file_size_mb > 100:
-            print(f"  大数据库 ({file_size_mb:.1f} MB)，使用 quick_check...")
-            cursor.execute("PRAGMA quick_check")
+        # Routine reads should not force a blocking WAL checkpoint.
+        if check_mode == "quick":
+            print(f"  Large database ({file_size_mb:.1f} MB), using quick_check(1)...")
+            cursor.execute("PRAGMA quick_check(1)")
         else:
             cursor.execute("PRAGMA integrity_check")
         result = cursor.fetchone()
         conn.close()
 
         if result and result[0] == "ok":
+            signature = get_db_file_signature(db_path)
+            if signature is not None:
+                _db_check_cache[db_path] = (signature, check_mode)
             print(f"  数据库完整性检查通过")
             return True
 
@@ -124,6 +130,8 @@ def repair_database(db_path: str) -> bool:
     """尝试修复损坏的数据库"""
     import shutil
     import time
+
+    _db_check_cache.pop(db_path, None)
 
     try:
         # 尝试方式1: 使用 .recover 命令导出可恢复的数据
@@ -203,6 +211,7 @@ def repair_database(db_path: str) -> bool:
 
 async def _get_connection(db_type: str) -> aiosqlite.Connection:
     """从连接池获取数据库连接"""
+    await _ensure_database_ready(db_type)
     async with _connection_lock:
         if db_type not in _connection_pool:
             db_map = {
@@ -214,7 +223,6 @@ async def _get_connection(db_type: str) -> aiosqlite.Connection:
             # 确保数据库目录存在
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             # 检查数据库完整性
-            check_and_repair_db(db_path, db_type)
             conn = await aiosqlite.connect(db_path)
             # 设置连接池参数
             await conn.execute("PRAGMA journal_mode=WAL")
@@ -222,6 +230,63 @@ async def _get_connection(db_type: str) -> aiosqlite.Connection:
             await conn.execute("PRAGMA cache_size=-2000")
             _connection_pool[db_type] = conn
         return _connection_pool[db_type]
+
+
+def _initialize_databases() -> None:
+    """Run the legacy schema setup outside the ComfyUI event loop."""
+    create_tables()
+    migrate_old_db()
+    migrate_db()
+    if localLang == "zh_CN":
+        check_and_initialize_db("tags")
+        check_and_initialize_db("danbooru")
+
+
+def _has_current_schema(db_type: str) -> bool:
+    """Check the current database schema without scanning user data."""
+    db_map = {
+        "tags": (tags_db_path, {"tag_groups", "tag_subgroups", "tag_tags"}),
+        "history": (history_db_path, {"history", "collect_history"}),
+        "danbooru": (danbooru_db_path, {"danbooru_tag"}),
+    }
+    db_path, required_tables = db_map[db_type]
+    if not os.path.exists(db_path):
+        return False
+
+    conn = sqlite3.connect(db_path, timeout=1)
+    try:
+        table_rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        tables = {row[0] for row in table_rows}
+        if not required_tables.issubset(tables):
+            return False
+        if db_type == "tags":
+            version = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+            ).fetchone()[0]
+            return version >= 4
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
+async def _ensure_database_ready(db_type: str) -> None:
+    """Lazily initialize WeiLin databases without blocking web requests."""
+    global _database_ready
+    if db_type in _database_ready:
+        return
+
+    async with _database_init_lock:
+        if db_type in _database_ready:
+            return
+        if _has_current_schema(db_type):
+            _database_ready.add(db_type)
+            return
+        await asyncio.to_thread(_initialize_databases)
+        _database_ready.update(("tags", "history", "danbooru"))
 
 
 def create_tables():
@@ -1188,6 +1253,8 @@ def force_repair_database(db_path: str) -> bool:
     """强制修复数据库（用于运行时错误恢复）"""
     import time
 
+    _db_check_cache.pop(db_path, None)
+
     try:
         # 关闭所有可能的连接
         import gc
@@ -1322,8 +1389,9 @@ def _create_history_tables():
 
 
 # 修改set_language函数
-def set_language(lang):
-    global db_path, tags_db_path, history_db_path, danbooru_db_path
+def set_language(lang, initialize=False):
+    global db_path, tags_db_path, history_db_path, danbooru_db_path, localLang
+    localLang = lang
     db_path = os.path.join(current_dir, f"../../../user_data/userdatas_{lang}.db")
     tags_db_path = os.path.join(
         current_dir, f"../../../user_data/userdatas_{lang}_tags.db"
@@ -1335,6 +1403,11 @@ def set_language(lang):
         current_dir, f"../../../user_data/userdatas_{lang}_danbooru.db"
     )
 
+    _database_ready.clear()
+    _db_check_cache.clear()
+    if not initialize:
+        return
+
     # 初始化数据库
     create_tables()
     migrate_old_db()  # 迁移旧数据库
@@ -1344,6 +1417,7 @@ def set_language(lang):
     if lang == "zh_CN":
         check_and_initialize_db("tags")
         check_and_initialize_db("danbooru")
+    _database_ready.update(("tags", "history", "danbooru"))
 
 
 # 获取数据库路径

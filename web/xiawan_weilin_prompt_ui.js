@@ -114,7 +114,7 @@ function removeNodeBySeed(seed) {
   }
 }
 // 版本号，用于强制刷新缓存 - 修改此值可强制浏览器重新加载静态资源
-const WEILIN_VERSION = '1.1.1';
+const WEILIN_VERSION = '1.2.2';
 
 // 资源加载状态
 let resourcesLoaded = false;
@@ -190,6 +190,12 @@ function loadResourcesOnDemand() {
     script1.onload = checkAllLoaded;
     script1.onerror = checkAllLoaded;
     document.head.appendChild(script1);
+
+    // Load the tag-library importer alongside the WeiLin panel.
+    var intelligentTagImportScript = document.createElement('script');
+    intelligentTagImportScript.src = new URL('./xiawan_intelligent_tag_import.js', import.meta.url).href;
+    intelligentTagImportScript.type = 'text/javascript';
+    document.head.appendChild(intelligentTagImportScript);
 
     // 加载CSS - 使用preload优化
     var link1 = document.createElement('link');
