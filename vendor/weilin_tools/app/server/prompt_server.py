@@ -233,7 +233,8 @@ async def _upload_image(request):
 @PromptServer.instance.routes.get(baseUrl + "prompt/get_group_tags")
 async def _get_group_tags(request):
     try:
-        data = await get_group_tags()  # 添加await
+        include_tags = request.rel_url.query.get("include_tags", "0") == "1"
+        data = await get_group_tags(include_tags=include_tags)
         return web.json_response({"data": data})
     except Exception as e:
         print(f"Error: {e}")
@@ -537,6 +538,21 @@ async def _get_tag_tags(request):
         return web.Response(status=500)
 
     return web.json_response(resp)
+
+
+@PromptServer.instance.routes.post(baseUrl + "prompt/get_tag_tags_page")
+async def _get_tag_tags_page(request):
+    try:
+        data = await request.json()
+        page = int(data.get("page", 1))
+        page_size = int(data.get("page_size", 200))
+        result = await get_tag_tags_page(data["g_uuid"], page, page_size)
+        return web.json_response(result)
+    except (KeyError, TypeError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        print(f"Error: {e}")
+        return web.Response(status=500)
 
 
 @PromptServer.instance.routes.post(baseUrl + "prompt/search_tags")

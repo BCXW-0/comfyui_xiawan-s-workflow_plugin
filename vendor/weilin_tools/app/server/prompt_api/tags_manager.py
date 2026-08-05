@@ -288,7 +288,7 @@ def delete_child_node_group(g_uuid):
         conn.close()
 
 
-async def get_group_tags():
+async def _get_group_tags_full():
     """
     获取所有标签分组（带缓存）
     文件位置: app/server/prompt_api/tags_manager.py:231
@@ -377,7 +377,70 @@ async def get_group_tags():
     return result_list
 
 
+async def get_group_tags(include_tags=False):
+    """Return the category tree without loading every tag by default."""
+    if include_tags:
+        return await _get_group_tags_full()
+
+    query = """
+        SELECT
+            g.id_index as group_id, g.name as group_name, g.color as group_color,
+            g.create_time as group_create_time, g.p_uuid as group_p_uuid,
+            sg.id_index as subgroup_id, sg.name as subgroup_name, sg.color as subgroup_color,
+            sg.create_time as subgroup_create_time, sg.g_uuid as subgroup_g_uuid,
+            sg.p_uuid as subgroup_p_uuid
+        FROM tag_groups g
+        LEFT JOIN tag_subgroups sg ON g.p_uuid = sg.p_uuid
+        ORDER BY g.create_time ASC, sg.create_time ASC
+    """
+    data = await fetch_all("tags", query)
+    result = {}
+
+    for row in data:
+        group = result.setdefault(
+            row[4],
+            {
+                "id_index": row[0],
+                "name": row[1],
+                "color": row[2],
+                "create_time": row[3],
+                "p_uuid": row[4],
+                "groups": [],
+            },
+        )
+        if row[9]:
+            group["groups"].append(
+                {
+                    "id_index": row[5],
+                    "name": row[6],
+                    "color": row[7],
+                    "create_time": row[8],
+                    "g_uuid": row[9],
+                    "p_uuid": row[10],
+                    "tags": [],
+                }
+            )
+
+    return list(result.values())
+
+
 async def get_group_tags_paginated(page=1, page_size=500):
+    """Paginate the lightweight category tree without joining tag rows."""
+    page = max(1, int(page))
+    page_size = min(500, max(1, int(page_size)))
+    result = await get_group_tags()
+    start = (page - 1) * page_size
+    total = len(result)
+    return {
+        "data": result[start : start + page_size],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
+async def _get_group_tags_paginated_legacy(page=1, page_size=500):
     """
     分页获取标签分组
     """
@@ -626,6 +689,45 @@ async def get_tag_tags(g_uuid):
         }
         for row in data
     ]
+
+
+async def get_tag_tags_page(g_uuid, page=1, page_size=200):
+    """Return a bounded page of tags for the tag manager UI."""
+    page = max(1, int(page))
+    page_size = min(500, max(1, int(page_size)))
+    query = """
+        SELECT
+            id_index, text, desc, color, create_time, g_uuid, t_uuid,
+            image_path, image_status
+        FROM tag_tags
+        WHERE g_uuid = ?
+        ORDER BY create_time DESC, id_index DESC
+        LIMIT ? OFFSET ?
+    """
+    data = await fetch_all(
+        "tags", query, (g_uuid, page_size + 1, (page - 1) * page_size)
+    )
+    has_more = len(data) > page_size
+    data = data[:page_size]
+    return {
+        "data": [
+            {
+                "id_index": row[0],
+                "text": row[1],
+                "desc": row[2],
+                "color": row[3],
+                "create_time": row[4],
+                "g_uuid": row[5],
+                "t_uuid": row[6],
+                "image_path": row[7],
+                "image_status": row[8],
+            }
+            for row in data
+        ],
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+    }
 
 
 async def search_tags(keyword):

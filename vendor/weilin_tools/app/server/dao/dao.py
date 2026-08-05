@@ -23,6 +23,8 @@ def getUUID():
 _connection_pool = {}
 _connection_lock = asyncio.Lock()
 _db_check_cache = {}
+_database_ready = set()
+_database_init_lock = asyncio.Lock()
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -209,6 +211,7 @@ def repair_database(db_path: str) -> bool:
 
 async def _get_connection(db_type: str) -> aiosqlite.Connection:
     """从连接池获取数据库连接"""
+    await _ensure_database_ready(db_type)
     async with _connection_lock:
         if db_type not in _connection_pool:
             db_map = {
@@ -220,7 +223,6 @@ async def _get_connection(db_type: str) -> aiosqlite.Connection:
             # 确保数据库目录存在
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             # 检查数据库完整性
-            check_and_repair_db(db_path, db_type)
             conn = await aiosqlite.connect(db_path)
             # 设置连接池参数
             await conn.execute("PRAGMA journal_mode=WAL")
@@ -228,6 +230,63 @@ async def _get_connection(db_type: str) -> aiosqlite.Connection:
             await conn.execute("PRAGMA cache_size=-2000")
             _connection_pool[db_type] = conn
         return _connection_pool[db_type]
+
+
+def _initialize_databases() -> None:
+    """Run the legacy schema setup outside the ComfyUI event loop."""
+    create_tables()
+    migrate_old_db()
+    migrate_db()
+    if localLang == "zh_CN":
+        check_and_initialize_db("tags")
+        check_and_initialize_db("danbooru")
+
+
+def _has_current_schema(db_type: str) -> bool:
+    """Check the current database schema without scanning user data."""
+    db_map = {
+        "tags": (tags_db_path, {"tag_groups", "tag_subgroups", "tag_tags"}),
+        "history": (history_db_path, {"history", "collect_history"}),
+        "danbooru": (danbooru_db_path, {"danbooru_tag"}),
+    }
+    db_path, required_tables = db_map[db_type]
+    if not os.path.exists(db_path):
+        return False
+
+    conn = sqlite3.connect(db_path, timeout=1)
+    try:
+        table_rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        tables = {row[0] for row in table_rows}
+        if not required_tables.issubset(tables):
+            return False
+        if db_type == "tags":
+            version = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+            ).fetchone()[0]
+            return version >= 4
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
+async def _ensure_database_ready(db_type: str) -> None:
+    """Lazily initialize WeiLin databases without blocking web requests."""
+    global _database_ready
+    if db_type in _database_ready:
+        return
+
+    async with _database_init_lock:
+        if db_type in _database_ready:
+            return
+        if _has_current_schema(db_type):
+            _database_ready.add(db_type)
+            return
+        await asyncio.to_thread(_initialize_databases)
+        _database_ready.update(("tags", "history", "danbooru"))
 
 
 def create_tables():
@@ -1330,8 +1389,9 @@ def _create_history_tables():
 
 
 # 修改set_language函数
-def set_language(lang):
-    global db_path, tags_db_path, history_db_path, danbooru_db_path
+def set_language(lang, initialize=False):
+    global db_path, tags_db_path, history_db_path, danbooru_db_path, localLang
+    localLang = lang
     db_path = os.path.join(current_dir, f"../../../user_data/userdatas_{lang}.db")
     tags_db_path = os.path.join(
         current_dir, f"../../../user_data/userdatas_{lang}_tags.db"
@@ -1343,6 +1403,11 @@ def set_language(lang):
         current_dir, f"../../../user_data/userdatas_{lang}_danbooru.db"
     )
 
+    _database_ready.clear()
+    _db_check_cache.clear()
+    if not initialize:
+        return
+
     # 初始化数据库
     create_tables()
     migrate_old_db()  # 迁移旧数据库
@@ -1352,6 +1417,7 @@ def set_language(lang):
     if lang == "zh_CN":
         check_and_initialize_db("tags")
         check_and_initialize_db("danbooru")
+    _database_ready.update(("tags", "history", "danbooru"))
 
 
 # 获取数据库路径

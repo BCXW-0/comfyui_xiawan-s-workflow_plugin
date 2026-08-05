@@ -2,6 +2,8 @@
 
 面向 ComfyUI 的 SDXL / Anima 工作流插件，提供文生图、图生图、ControlNet、LoRA、提示词编辑、放大、部位细化、结果预览和低显存运行支持。
 
+当前发布版本：`R-1.2.3`
+
 GitHub Description:
 
 > An advanced ComfyUI workflow plugin for SDXL and Anima generation with prompt tools, LoRA management, ControlNet, upscaling, detail refinement, and low-VRAM support.
@@ -23,16 +25,16 @@ ComfyUI/custom_nodes/comfyui_xiawan's-workflow_plugin
 使用发布模板：
 
 ```text
-workflows/Xiawan's Workflow ver.R-1.2.1.json
+workflows/Xiawan's Workflow ver.R-1.2.3.json
 ```
 
-R-1.2.1 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
+R-1.2.3 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
 
 `Xiawan's Workflow.json` 是开发者本地运行配置，包含实际跑图时的模型、LoRA、提示词和输入图，不作为发布模板使用。
 
 ### 细化模型
 
-R-1.2.1 使用以下部位检测模型：
+R-1.2.3 使用以下部位检测模型：
 
 | 用途 | 文件名 |
 |---|---|
@@ -65,6 +67,10 @@ ComfyUI/models/ultralytics/bbox/
 2. 点击“智能法典分析”，选择 `.txt`、`.doc` 或 `.docx` 文件。
 3. TXT 可用 `#`/`##` 标记分类，也可直接按行提供 Tag；Tab、`||` 或单个逗号可分隔描述。DOCX 请保留标题层级；旧式 DOC 及常见 Word/WPS 兼容格式由插件直接读取正文，并将文件名作为一级分类、未标注层级的内容放入默认二级分类。
 4. 导入完成后标签管理会自动刷新，并显示一级分类、二级分类和 Tag 数量，同时弹出导入成功提示。DOC、DOCX 和 TXT 均由插件内置解析；单个文件上限为 64 MB。
+
+### 标签管理加载
+
+打开标签管理后先选择一级分类和二级分组，系统首批加载 200 个 Tag。需要继续查看时点击“加载更多标签”；搜索功能可直接查找完整数据库。标签数据库只作为本机运行数据保留，不写入桌面工作区，也不随 GitHub 发布包提交。
 
 ### 重要限制
 
