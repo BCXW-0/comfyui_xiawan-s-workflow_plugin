@@ -11,6 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vendor.weilin_tools.app.server.panel_server.intelligent_tag_import import (
+    _build_sql,
+    _filter_records_for_database,
     _records_from_docx,
     _records_from_txt,
     _validation_schema,
@@ -110,8 +112,11 @@ def test_sql_is_executable_and_uuid_values_are_stable():
     uuid_values_b = re.findall(r"[0-9a-f]{8}-[0-9a-f-]{27,}", "\n".join(statements_b))
     uuid_values_c = re.findall(r"[0-9a-f]{8}-[0-9a-f-]{27,}", "\n".join(statements_c))
     assert uuid_values_a == uuid_values_b
-    assert uuid_values_a == uuid_values_c
-    assert sum('INSERT OR REPLACE INTO "tag_groups"' in item for item in statements_a) == 1
+    assert uuid_values_a[:2] == uuid_values_c[:2]
+    tag_uuid_a = re.findall(r"[0-9a-f]{8}-[0-9a-f-]{27,}", statements_a[-1])[-1]
+    tag_uuid_c = re.findall(r"[0-9a-f]{8}-[0-9a-f-]{27,}", statements_c[-1])[-1]
+    assert tag_uuid_a != tag_uuid_c
+    assert sum('INSERT OR IGNORE INTO "tag_groups"' in item for item in statements_a) == 1
 
     connection = sqlite3.connect(":memory:")
     try:
@@ -120,5 +125,55 @@ def test_sql_is_executable_and_uuid_values_are_stable():
             connection.execute(statement)
         assert connection.execute("SELECT group_id FROM tag_subgroups").fetchone() == (1,)
         assert connection.execute("SELECT subgroup_id FROM tag_tags").fetchone() == (1,)
+    finally:
+        connection.close()
+
+
+def test_database_filter_skips_exact_duplicates_and_keeps_new_descriptions():
+    categories, records = _records_from_txt(
+        b"# Main\n## Group\nsame_tag||old description\n"
+        b"same_tag||old description\n"
+        b"same_tag||new description\n"
+        b"new_tag||new description\n",
+        "library.txt",
+    )
+    seed_categories, seed_records = _records_from_txt(
+        b"# Main\n## Group\nsame_tag||old description\n",
+        "seed.txt",
+    )
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        _validation_schema(connection)
+        seed_statements, _summary = _build_sql(seed_categories, seed_records)
+        for statement in seed_statements:
+            connection.execute(statement)
+
+        filtered_categories, new_records, skipped = _filter_records_for_database(
+            connection, categories, records
+        )
+
+        assert skipped == 2
+        assert [record["desc"] for record in new_records] == [
+            "new description",
+            "new description",
+        ]
+        assert [record["text"] for record in new_records] == [
+            "same_tag",
+            "new_tag",
+        ]
+        assert list(filtered_categories) == [("Main", "Group")]
+
+        new_statements, _summary = _build_sql(filtered_categories, new_records)
+        for statement in new_statements:
+            connection.execute(statement)
+        rows = connection.execute(
+            "SELECT text, desc FROM tag_tags ORDER BY id_index"
+        ).fetchall()
+        assert rows == [
+            ("same_tag", "old description"),
+            ("same_tag", "new description"),
+            ("new_tag", "new description"),
+        ]
     finally:
         connection.close()
