@@ -462,10 +462,10 @@ class XiawanAnimaBaseParams:
                 "宽度": ("INT", {"default": 832, "min": 64, "max": 8192, "step": 8}),
                 "高度": ("INT", {"default": 1216, "min": 64, "max": 8192, "step": 8}),
                 "批次数量": ("INT", {"default": 1, "min": 1, "max": 64, "step": 1}),
-                "步数": ("INT", {"default": 8, "min": 1, "max": 100, "step": 1}),
-                "CFG": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 30.0, "step": 0.1}),
+                "步数": ("INT", {"default": 30, "min": 1, "max": 100, "step": 1}),
+                "CFG": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 30.0, "step": 0.1}),
                 "主采样降噪": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "采样器": (SAMPLERS, {"default": "euler"}),
+                "采样器": (SAMPLERS, {"default": "er_sde"}),
                 "调度器": (SCHEDULERS, {"default": "simple"}),
             },
         }
@@ -479,10 +479,10 @@ class XiawanAnimaBaseParams:
         width = _value(kwargs, "宽度", "width", default=1024)
         height = _value(kwargs, "高度", "height", default=1024)
         batch_size = _value(kwargs, "批次数量", "batch_size", default=1)
-        steps = _value(kwargs, "步数", "steps", default=10)
-        cfg = _value(kwargs, "CFG", "cfg", default=1.0)
+        steps = _value(kwargs, "步数", "steps", default=30)
+        cfg = _value(kwargs, "CFG", "cfg", default=4.0)
         main_denoise = _value(kwargs, "主采样降噪", "main_denoise", default=1.0)
-        sampler_name = _value(kwargs, "采样器", "sampler_name", default="euler")
+        sampler_name = _value(kwargs, "采样器", "sampler_name", default="er_sde")
         scheduler = _value(kwargs, "调度器", "scheduler", default="simple")
         return (width, height, batch_size, steps, cfg, main_denoise, sampler_name, scheduler)
 
@@ -557,6 +557,40 @@ class XiawanLatentSwitch:
 
     RETURN_TYPES = ("LATENT",)
     RETURN_NAMES = ("latent",)
+    FUNCTION = "output"
+    CATEGORY = "Xiawan/Workflow Controls"
+
+    def check_lazy_status(self, switch=False, on_false=_MISSING, on_true=_MISSING, **kwargs):
+        if _coerce_bool(switch) and on_true is None:
+            return ["on_true"]
+        if not _coerce_bool(switch) and on_false is None:
+            return ["on_false"]
+
+    def output(self, switch=False, on_false=_MISSING, on_true=_MISSING):
+        if on_false is _MISSING:
+            return (on_true,)
+        if on_true is _MISSING:
+            return (on_false,)
+        if _coerce_bool(switch):
+            return (on_true,)
+        return (on_false,)
+
+
+class XiawanVAESwitch:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "switch": ("BOOLEAN", {"default": False, "forceInput": True}),
+            },
+            "optional": {
+                "on_false": ("VAE", {"lazy": True}),
+                "on_true": ("VAE", {"lazy": True}),
+            },
+        }
+
+    RETURN_TYPES = ("VAE",)
+    RETURN_NAMES = ("vae",)
     FUNCTION = "output"
     CATEGORY = "Xiawan/Workflow Controls"
 
@@ -676,7 +710,7 @@ class XiawanAnimaModelLoader:
     def _native_anima_supported():
         """Require ComfyUI's official Anima model and text-encoder stack."""
         try:
-            import comfy.ldm.anima.model  # noqa: F401
+            from comfy.ldm.anima import model as anima_model
             import comfy.model_base
 
             te_model = getattr(getattr(comfy, "sd", None), "TEModel", None)
@@ -684,6 +718,7 @@ class XiawanAnimaModelLoader:
                 hasattr(getattr(comfy, "sd", None), "load_clip")
                 and hasattr(te_model, "QWEN3_06B")
                 and hasattr(comfy.model_base, "Anima")
+                and hasattr(anima_model, "LLMAdapter")
             )
         except Exception:
             return False
@@ -2451,6 +2486,7 @@ NODE_CLASS_MAPPINGS = {
     "XiawanAnimaBranchIndex": XiawanAnimaBranchIndex,
     "XiawanImageSwitch": XiawanImageSwitch,
     "XiawanLatentSwitch": XiawanLatentSwitch,
+    "XiawanVAESwitch": XiawanVAESwitch,
     "XiawanModelSwitch": XiawanModelSwitch,
     "XiawanFinalImageSwitch": XiawanFinalImageSwitch,
     "XiawanAnimaModelLoader": XiawanAnimaModelLoader,
@@ -2485,6 +2521,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "XiawanBaseParams": "夏晚 · SDXL 底图 / 主采样参数",
     "XiawanAnimaBaseParams": "夏晚 · Anima 底图参数",
     "XiawanAnimaBranchIndex": "夏晚 · SDXL / Anima 底图互斥",
+    "XiawanVAESwitch": "夏晚 · 图生图 VAE 分支切换",
     "XiawanAnimaModelLoader": "夏晚 · Anima 模型加载",
     "XiawanFinalImageSwitch": "夏晚 · 最终图像安全选择",
     "XiawanOptionalPromptAppend": "夏晚 · 可选提示词追加",
