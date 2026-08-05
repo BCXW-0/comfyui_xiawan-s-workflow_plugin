@@ -2,7 +2,7 @@
 
 面向 ComfyUI 的 SDXL / Anima 工作流插件，提供文生图、图生图、ControlNet、LoRA、提示词编辑、放大、部位细化、结果预览和低显存运行支持。
 
-当前发布版本：`R-1.3.0`
+当前发布版本：`R-1.4.0`
 
 GitHub Description:
 
@@ -22,23 +22,23 @@ ComfyUI/custom_nodes/comfyui_xiawan's-workflow_plugin
 
 ### Anima 运行时
 
-R-1.3.0 的 Anima 分支使用 ComfyUI 原生 Anima 模型和 `LLMAdapter` 文本编码链路，并通过原生 Qwen3 编码器加载器读取文本编码器。请使用包含原生 Anima 支持的 ComfyUI 版本；开发验证基线为提交 `2500d0fcfb973724731824e829276e073bd9b396` 或更新版本。旧运行时会明确提示升级，不会继续生成伪成功的噪声图。
+R-1.4.0 的 Anima 分支使用 ComfyUI 0.28.0 原生 Anima 模型、`LLMAdapter` 和 Qwen3 文本编码链路。插件会检查 `Anima`、`LLMAdapter` 和 Qwen3 加载能力；缺少任一能力时会在加载阶段提示升级，不会继续生成伪成功的全幅彩色噪声图。Anima 图生图会按分支选择 Anima VAE，并在自采样与图生图模式之间选择对应 latent。
 
 ### 打开工作流
 
 使用发布模板：
 
 ```text
-workflows/Xiawan's Workflow ver.R-1.3.0.json
+workflows/Xiawan's Workflow ver.R-1.4.0.json
 ```
 
-R-1.3.0 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
+R-1.4.0 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
 
 `Xiawan's Workflow.json` 是开发者本地运行配置，包含实际跑图时的模型、LoRA、提示词和输入图，不作为发布模板使用。
 
 ### 细化模型
 
-R-1.3.0 使用以下部位检测模型：
+R-1.4.0 使用以下部位检测模型：
 
 | 用途 | 文件名 |
 |---|---|
