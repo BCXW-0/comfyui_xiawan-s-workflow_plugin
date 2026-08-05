@@ -107,17 +107,17 @@ def _clear_published_inputs(workflow):
             _set_widget(node, 2, [])
 
 
-def update_metadata(workflow, role):
+def update_metadata(workflow, role, release_version="R-1.1"):
     links = workflow.get("links", [])
     workflow["last_link_id"] = max((int(link[0]) for link in links), default=0)
     workflow["last_node_id"] = max((int(node["id"]) for node in workflow.get("nodes", [])), default=0)
     extra = workflow.setdefault("extra", {})
-    extra["xiawan_release_version"] = "R-1.1"
+    extra["xiawan_release_version"] = release_version
     extra["xiawan_workflow_role"] = role
     extra["xiawan_schema_version"] = "1.1"
     extra["xiawan_geometry_policy"] = "existing node positions and sizes preserved"
     xiawan = extra.setdefault("xiawan", {})
-    xiawan["release_version"] = "R-1.1"
+    xiawan["release_version"] = release_version
     xiawan["source_of_truth"] = "published-template" if role == "published-template" else "developer-runtime"
     xiawan["layout_audit"] = {
         "nodes": len(workflow.get("nodes", [])),
@@ -131,7 +131,7 @@ def update_metadata(workflow, role):
         both_reflow["links"] = len(links)
 
 
-def migrate(source: Path, destination: Path, role: str, sanitize: bool):
+def migrate(source: Path, destination: Path, role: str, sanitize: bool, release_version: str = "R-1.1"):
     workflow = json.loads(source.read_text(encoding="utf-8"))
     before_geometry = {
         int(node["id"]): (node.get("pos"), node.get("size"))
@@ -140,7 +140,7 @@ def migrate(source: Path, destination: Path, role: str, sanitize: bool):
     connect_seed_matrix(workflow)
     if sanitize:
         _clear_published_inputs(workflow)
-    update_metadata(workflow, role)
+    update_metadata(workflow, role, release_version)
     after_geometry = {
         int(node["id"]): (node.get("pos"), node.get("size"))
         for node in workflow.get("nodes", [])
@@ -160,8 +160,9 @@ def main():
     parser.add_argument("destination", type=Path)
     parser.add_argument("--role", choices=("published-template", "developer-runtime"), required=True)
     parser.add_argument("--sanitize", action="store_true")
+    parser.add_argument("--release-version", default="R-1.1")
     args = parser.parse_args()
-    migrate(args.source, args.destination, args.role, args.sanitize)
+    migrate(args.source, args.destination, args.role, args.sanitize, args.release_version)
 
 
 if __name__ == "__main__":
