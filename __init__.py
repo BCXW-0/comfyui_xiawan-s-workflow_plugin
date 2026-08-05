@@ -673,6 +673,22 @@ class XiawanFinalImageSwitch:
 
 class XiawanAnimaModelLoader:
     @staticmethod
+    def _native_anima_supported():
+        """Require ComfyUI's official Anima model and text-encoder stack."""
+        try:
+            import comfy.ldm.anima.model  # noqa: F401
+            import comfy.model_base
+
+            te_model = getattr(getattr(comfy, "sd", None), "TEModel", None)
+            return (
+                hasattr(getattr(comfy, "sd", None), "load_clip")
+                and hasattr(te_model, "QWEN3_06B")
+                and hasattr(comfy.model_base, "Anima")
+            )
+        except Exception:
+            return False
+
+    @staticmethod
     def _release_previous_models():
         """Make room before loading Anima after an SDXL execution."""
         try:
@@ -719,6 +735,11 @@ class XiawanAnimaModelLoader:
     ):
         if comfy is None or torch is None:
             raise RuntimeError("ComfyUI model loading modules are unavailable.")
+        if not self._native_anima_supported():
+            raise RuntimeError(
+                "Anima requires a ComfyUI runtime with native Anima/LLMAdapter "
+                "support. Upgrade ComfyUI before running this branch."
+            )
 
         self._release_previous_models()
         model_options = {}
@@ -737,12 +758,8 @@ class XiawanAnimaModelLoader:
         if clip_device == "cpu":
             clip_options["load_device"] = clip_options["offload_device"] = torch.device("cpu")
         clip_path = folder_paths.get_full_path_or_raise("text_encoders", text_encoder)
-        try:
-            from .anima_text_encoder import load_anima_clip
-        except ImportError:
-            from anima_text_encoder import load_anima_clip
-        clip = load_anima_clip(
-            clip_path,
+        clip = comfy.sd.load_clip(
+            [clip_path],
             embedding_directory=folder_paths.get_folder_paths("embeddings"),
             model_options=clip_options,
         )

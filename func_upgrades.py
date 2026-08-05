@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 
 _coerce_bool = None
 _value = None
@@ -715,18 +716,37 @@ class XiawanSaveMetaPack:
     @staticmethod
     def _workflow_info(extra_pnginfo):
         info = extra_pnginfo[0] if isinstance(extra_pnginfo, list) and extra_pnginfo else extra_pnginfo
-        return info.get("workflow") if isinstance(info, dict) else None
+        if not isinstance(info, dict):
+            return None
+        workflow = info.get("workflow")
+        if workflow is not None:
+            return workflow
+        return info if isinstance(info.get("nodes"), list) else None
 
     @classmethod
     def _anima_enabled(cls, prompt, extra_pnginfo):
         workflow = cls._workflow_info(extra_pnginfo)
+        if isinstance(workflow, str):
+            try:
+                workflow = json.loads(workflow)
+            except (TypeError, ValueError):
+                workflow = None
         if isinstance(workflow, dict):
             for node in workflow.get("nodes", []):
                 if not isinstance(node, dict) or node.get("type") not in ("GroupIgnoreManager", "GroupMuteManager"):
                     continue
-                for group in (node.get("properties") or {}).get("groups", []):
-                    if isinstance(group, dict) and group.get("group_name") == "0-ii anima底图":
-                        return bool(group.get("enabled", False))
+                properties = node.get("properties") or {}
+                for group in properties.get("groups", []):
+                    if not isinstance(group, dict):
+                        continue
+                    group_name = str(group.get("group_name", ""))
+                    if "anima" in group_name.casefold() and isinstance(group.get("enabled"), bool):
+                        return group["enabled"]
+                cache = properties.get("groupStatesCache")
+                if isinstance(cache, dict):
+                    for group_name, enabled in cache.items():
+                        if "anima" in str(group_name).casefold() and isinstance(enabled, bool):
+                            return enabled
         values = cls._prompt_node(prompt, 257)
         anima = values.get("anima_enabled")
         return bool(anima) if isinstance(anima, bool) else False
