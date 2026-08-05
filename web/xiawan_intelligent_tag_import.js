@@ -30,10 +30,12 @@
         throw new Error(payload.message || '导入失败');
       }
       const data = payload.data || {};
+      const newTags = data.new_tags ?? data.tags ?? 0;
+      const skippedDuplicates = data.skipped_duplicates ?? 0;
       window.postMessage({ type: 'weilin_prompt_ui_tag_manager_refresh' }, '*');
       showStatus(
         host,
-        `导入成功，标签管理面板已自动刷新。请返回标签管理面板（${data.groups || 0} 个一级分类、${data.subgroups || 0} 个二级分类、${data.tags || 0} 个 Tag）`,
+        `导入成功，新增 ${newTags} 个 Tag，跳过 ${skippedDuplicates} 个重复项。标签管理面板已自动刷新（${data.groups || 0} 个一级分类、${data.subgroups || 0} 个二级分类）`,
         false,
       );
       window.setTimeout(() => {

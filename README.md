@@ -2,7 +2,7 @@
 
 面向 ComfyUI 的 SDXL / Anima 工作流插件，提供文生图、图生图、ControlNet、LoRA、提示词编辑、放大、部位细化、结果预览和低显存运行支持。
 
-当前发布版本：`R-1.2.3`
+当前发布版本：`R-1.2.4`
 
 GitHub Description:
 
@@ -25,16 +25,16 @@ ComfyUI/custom_nodes/comfyui_xiawan's-workflow_plugin
 使用发布模板：
 
 ```text
-workflows/Xiawan's Workflow ver.R-1.2.3.json
+workflows/Xiawan's Workflow ver.R-1.2.4.json
 ```
 
-R-1.2.3 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
+R-1.2.4 是清洁模板，已清除 Checkpoint、LoRA、提示词和个人输入图配置。首次使用时，请先在参数区选择本地模型，再填写提示词和输入图。
 
 `Xiawan's Workflow.json` 是开发者本地运行配置，包含实际跑图时的模型、LoRA、提示词和输入图，不作为发布模板使用。
 
 ### 细化模型
 
-R-1.2.3 使用以下部位检测模型：
+R-1.2.4 使用以下部位检测模型：
 
 | 用途 | 文件名 |
 |---|---|

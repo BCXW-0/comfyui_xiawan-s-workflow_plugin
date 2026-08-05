@@ -14,7 +14,7 @@ import time
 import unicodedata
 import uuid
 import zipfile
-from collections import Counter, OrderedDict
+from collections import OrderedDict
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
@@ -103,6 +103,15 @@ def _stable_uuid(kind: str, *parts: str) -> str:
     return str(uuid.uuid5(UUID_NAMESPACE, f"{kind}|{key}"))
 
 
+def _stable_tag_uuid(group_name: str, subgroup_name: str, tag_text: str, tag_desc: str) -> str:
+    """Keep case-sensitive tag variants distinct while preserving old category UUIDs."""
+
+    key = "|".join(
+        _clean_text(part) for part in (group_name, subgroup_name, tag_text, tag_desc)
+    )
+    return str(uuid.uuid5(UUID_NAMESPACE, f"tag|{key}"))
+
+
 def _sql_literal(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -141,7 +150,7 @@ def _build_sql(categories: OrderedDict, records: list[dict]) -> tuple[list[str],
         group_uuid = group_uuids[group_name]
         offset = len(statements)
         statements.append(
-            "INSERT OR REPLACE INTO \"tag_groups\" "
+            "INSERT OR IGNORE INTO \"tag_groups\" "
             "(\"name\", \"color\", \"create_time\", \"p_uuid\") VALUES "
             f"({_sql_literal(group_name)}, {_sql_literal(DEFAULT_COLOR)}, "
             f"{now + offset}, {_sql_literal(group_uuid)});"
@@ -155,7 +164,7 @@ def _build_sql(categories: OrderedDict, records: list[dict]) -> tuple[list[str],
         )
         offset = len(statements)
         statements.append(
-            "INSERT OR REPLACE INTO \"tag_subgroups\" "
+            "INSERT OR IGNORE INTO \"tag_subgroups\" "
             "(\"group_id\", \"name\", \"color\", \"create_time\", \"p_uuid\", \"g_uuid\") VALUES "
             f"((SELECT \"id_index\" FROM \"tag_groups\" WHERE \"p_uuid\" = "
             f"{_sql_literal(group_uuid)} LIMIT 1), {_sql_literal(subgroup_name)}, "
@@ -163,23 +172,18 @@ def _build_sql(categories: OrderedDict, records: list[dict]) -> tuple[list[str],
             f"{_sql_literal(subgroup_uuid)});"
         )
 
-    occurrences: Counter[tuple[str, str, str]] = Counter()
     for index, record in enumerate(records, start=1):
         group_name = record["group"]
         subgroup_name = record["subgroup"]
         subgroup_uuid = subgroup_uuids[(group_name, subgroup_name)]
-        identity = (group_name, subgroup_name, record["text"])
-        occurrence = occurrences[identity]
-        occurrences[identity] += 1
-        tag_uuid = _stable_uuid(
-            "tag",
+        tag_uuid = _stable_tag_uuid(
             group_name,
             subgroup_name,
             record["text"],
-            str(occurrence),
+            record["desc"],
         )
         statements.append(
-            "INSERT OR REPLACE INTO \"tag_tags\" "
+            "INSERT OR IGNORE INTO \"tag_tags\" "
             "(\"subgroup_id\", \"text\", \"desc\", \"color\", \"create_time\", \"g_uuid\", \"t_uuid\") VALUES "
             f"((SELECT \"id_index\" FROM \"tag_subgroups\" WHERE \"g_uuid\" = "
             f"{_sql_literal(subgroup_uuid)} LIMIT 1), {_sql_literal(record['text'])}, "
@@ -195,6 +199,100 @@ def _build_sql(categories: OrderedDict, records: list[dict]) -> tuple[list[str],
         "statements": len(statements),
     }
     return statements, summary
+
+
+def _record_key(record: dict) -> tuple[str, str, str, str]:
+    return (
+        record["group"],
+        record["subgroup"],
+        record["text"],
+        record["desc"],
+    )
+
+
+def _deduplicate_records(records: list[dict]) -> tuple[list[dict], int]:
+    unique_records: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    skipped = 0
+    for record in records:
+        key = _record_key(record)
+        if key in seen:
+            skipped += 1
+            continue
+        seen.add(key)
+        unique_records.append(record)
+    return unique_records, skipped
+
+
+def _categories_for_records(categories: OrderedDict, records: list[dict]) -> OrderedDict:
+    record_categories = {(record["group"], record["subgroup"]) for record in records}
+    return OrderedDict(
+        (key, None) for key in categories if key in record_categories
+    )
+
+
+def _existing_record_keys(
+    connection: sqlite3.Connection, records: list[dict]
+) -> set[tuple[str, str, str, str]]:
+    """Find exact database matches without scanning unrelated Tag values into Python."""
+
+    keys = {_record_key(record) for record in records}
+    if not keys:
+        return set()
+
+    connection.execute("DROP TABLE IF EXISTS temp._xiawan_import_keys")
+    connection.execute(
+        """
+        CREATE TEMP TABLE _xiawan_import_keys (
+            group_name TEXT NOT NULL,
+            subgroup_name TEXT NOT NULL,
+            tag_text TEXT NOT NULL,
+            tag_desc TEXT NOT NULL,
+            PRIMARY KEY (group_name, subgroup_name, tag_text, tag_desc)
+        )
+        """
+    )
+    try:
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO _xiawan_import_keys
+                (group_name, subgroup_name, tag_text, tag_desc)
+            VALUES (?, ?, ?, ?)
+            """,
+            sorted(keys),
+        )
+        rows = connection.execute(
+            """
+            SELECT k.group_name, k.subgroup_name, k.tag_text, k.tag_desc
+            FROM _xiawan_import_keys AS k
+            JOIN tag_groups AS g
+              ON g.name COLLATE BINARY = k.group_name COLLATE BINARY
+            JOIN tag_subgroups AS sg
+              ON sg.group_id = g.id_index
+             AND sg.name COLLATE BINARY = k.subgroup_name COLLATE BINARY
+            JOIN tag_tags AS t
+              ON t.subgroup_id = sg.id_index
+             AND t.text COLLATE BINARY = k.tag_text COLLATE BINARY
+             AND COALESCE(t.desc, '') COLLATE BINARY = k.tag_desc COLLATE BINARY
+            """
+        ).fetchall()
+        return {tuple(row) for row in rows}
+    finally:
+        connection.execute("DROP TABLE IF EXISTS temp._xiawan_import_keys")
+
+
+def _filter_records_for_database(
+    connection: sqlite3.Connection,
+    categories: OrderedDict,
+    records: list[dict],
+) -> tuple[OrderedDict, list[dict], int]:
+    unique_records, internal_duplicates = _deduplicate_records(records)
+    existing_keys = _existing_record_keys(connection, unique_records)
+    new_records = [
+        record for record in unique_records if _record_key(record) not in existing_keys
+    ]
+    filtered_categories = _categories_for_records(categories, new_records)
+    return filtered_categories, new_records, internal_duplicates + len(existing_keys)
 
 
 def _docx_paragraphs(data: bytes) -> list[dict]:
@@ -620,7 +718,9 @@ def _records_from_doc(data: bytes, filename: str) -> tuple[OrderedDict, list[dic
     return categories, records
 
 
-def parse_source(filename: str, data: bytes) -> tuple[list[str], dict]:
+def _parse_source_records(
+    filename: str, data: bytes
+) -> tuple[OrderedDict, list[dict], str]:
     if len(data) > MAX_SOURCE_BYTES:
         raise ImportFormatError("文件超过 64 MB，无法导入")
     extension = Path(filename).suffix.lower()
@@ -638,9 +738,19 @@ def parse_source(filename: str, data: bytes) -> tuple[list[str], dict]:
     else:
         raise ImportFormatError("仅支持 TXT、DOC 或 DOCX 文件")
 
+    return categories, records, extension[1:].upper()
+
+
+def parse_source(filename: str, data: bytes) -> tuple[list[str], dict]:
+    categories, records, source_format = _parse_source_records(filename, data)
     statements, summary = _build_sql(categories, records)
     _validate_sql(statements)
-    summary["source_format"] = extension[1:].upper()
+    summary.update(
+        source_format=source_format,
+        source_tags=len(records),
+        new_tags=len(records),
+        skipped_duplicates=0,
+    )
     return statements, summary
 
 
@@ -729,7 +839,7 @@ def _ensure_tags_schema(connection: sqlite3.Connection) -> None:
 
 
 def import_to_tags_database(filename: str, data: bytes) -> dict:
-    statements, summary = parse_source(filename, data)
+    categories, source_records, source_format = _parse_source_records(filename, data)
 
     from ..dao.dao import get_db_path
 
@@ -737,6 +847,17 @@ def import_to_tags_database(filename: str, data: bytes) -> dict:
     connection = sqlite3.connect(db_path)
     try:
         _ensure_tags_schema(connection)
+        categories, records, skipped_duplicates = _filter_records_for_database(
+            connection, categories, source_records
+        )
+        statements, summary = _build_sql(categories, records)
+        summary.update(
+            source_format=source_format,
+            source_tags=len(source_records),
+            new_tags=len(records),
+            skipped_duplicates=skipped_duplicates,
+        )
+        _validate_sql(statements)
         connection.execute("BEGIN")
         for statement in statements:
             connection.execute(statement)
