@@ -40,6 +40,7 @@ import logging
 import copy
 import sys
 import folder_paths  # type: ignore
+from ..utils.lora_paths import resolve_lora_path
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +111,7 @@ def to_diffusers(input_lora):
 def nunchaku_load_lora(model, lora_name, lora_strength):
     """Load a Flux LoRA for Nunchaku model"""
     # Get full path to the LoRA file. Allow both direct paths and registered LoRA names.
-    lora_path = (
-        lora_name
-        if os.path.isfile(lora_name)
-        else folder_paths.get_full_path("loras", lora_name)
-    )
+    lora_path = resolve_lora_path(lora_name)
     if not lora_path or not os.path.isfile(lora_path):
         logger.warning("Skipping LoRA '%s' because it could not be found", lora_name)
         return model

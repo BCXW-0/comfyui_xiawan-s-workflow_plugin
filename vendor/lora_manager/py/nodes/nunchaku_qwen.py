@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import comfy.utils  # type: ignore
-import folder_paths  # type: ignore
 import torch
 import torch.nn as nn
 from safetensors import safe_open
@@ -27,6 +26,7 @@ from nunchaku.lora.flux.nunchaku_converter import (
     pack_lowrank_weight,
     unpack_lowrank_weight,
 )
+from ..utils.lora_paths import resolve_lora_path
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +561,7 @@ def nunchaku_load_qwen_loras(model, lora_configs: List[Tuple[str, float]], apply
     ret_model_wrapper.loras = list(getattr(model_wrapper, "loras", []))
 
     for lora_name, lora_strength in lora_configs:
-        lora_path = lora_name if os.path.isfile(lora_name) else folder_paths.get_full_path("loras", lora_name)
+        lora_path = resolve_lora_path(lora_name)
         if not lora_path or not os.path.isfile(lora_path):
             logger.warning("Skipping Qwen LoRA '%s' because it could not be found", lora_name)
             continue

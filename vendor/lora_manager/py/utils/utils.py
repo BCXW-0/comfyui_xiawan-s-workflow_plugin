@@ -5,6 +5,7 @@ from typing import Dict
 from ..services.service_registry import ServiceRegistry
 from ..config import config
 from ..services.settings_manager import get_settings_manager
+from .lora_paths import resolve_lora_path
 import asyncio
 
 
@@ -45,7 +46,7 @@ def get_lora_info(lora_name):
                 continue
 
             file_path = item.get("file_path")
-            if not file_path:
+            if not file_path or not os.path.isfile(file_path):
                 continue
 
             all_roots = list(config.loras_roots or []) + list(
@@ -73,7 +74,8 @@ def get_lora_info(lora_name):
                 trigger_words = civitai.get("trainedWords", []) if civitai else []
                 return file_path, trigger_words
 
-        return lora_name, []
+        resolved_path = resolve_lora_path(lora_name)
+        return (resolved_path or lora_name), []
 
     try:
         # Check if we're already in an event loop
@@ -134,14 +136,14 @@ def get_lora_info_absolute(lora_name):
 
             if lora_name_no_ext == file_name_no_ext:
                 file_path = item.get("file_path")
-                if file_path:
+                if file_path and os.path.isfile(file_path):
                     civitai = item.get("civitai", {})
                     trigger_words = civitai.get("trainedWords", []) if civitai else []
                     return file_path, trigger_words
 
             if lora_name_no_ext == path_name:
                 file_path = item.get("file_path")
-                if file_path:
+                if file_path and os.path.isfile(file_path):
                     civitai = item.get("civitai", {})
                     trigger_words = civitai.get("trainedWords", []) if civitai else []
                     return file_path, trigger_words
@@ -154,12 +156,13 @@ def get_lora_info_absolute(lora_name):
 
         if best_fallback:
             file_path = best_fallback.get("file_path")
-            if file_path:
+            if file_path and os.path.isfile(file_path):
                 civitai = best_fallback.get("civitai", {})
                 trigger_words = civitai.get("trainedWords", []) if civitai else []
                 return file_path, trigger_words
 
-        return lora_name, []
+        resolved_path = resolve_lora_path(lora_name)
+        return (resolved_path or lora_name), []
 
     try:
         # Check if we're already in an event loop
