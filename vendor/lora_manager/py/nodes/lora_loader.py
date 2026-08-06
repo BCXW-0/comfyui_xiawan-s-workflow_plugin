@@ -1,5 +1,6 @@
 import importlib
 import logging
+import os
 import re
 
 import comfy.sd  # type: ignore
@@ -87,6 +88,12 @@ def _apply_entries(model, clip, lora_entries, nunchaku_model_kind):
         nunchaku_load_qwen_loras = _get_nunchaku_load_qwen_loras()
         qwen_lora_configs = []
         for entry in lora_entries:
+            if not os.path.isfile(entry["absolute_path"]):
+                logger.warning(
+                    "Skipping LoRA '%s' because it could not be resolved to a file",
+                    entry["name"],
+                )
+                continue
             qwen_lora_configs.append((entry["absolute_path"], entry["model_strength"]))
             loaded_loras.append({
                 "name": entry["name"],
@@ -100,8 +107,15 @@ def _apply_entries(model, clip, lora_entries, nunchaku_model_kind):
         return model, clip, loaded_loras, all_trigger_words
 
     for entry in lora_entries:
+        if not os.path.isfile(entry["absolute_path"]):
+            logger.warning(
+                "Skipping LoRA '%s' because it could not be resolved to a file",
+                entry["name"],
+            )
+            continue
+
         if nunchaku_model_kind == "flux":
-            model = nunchaku_load_lora(model, entry["input_path"], entry["model_strength"])
+            model = nunchaku_load_lora(model, entry["absolute_path"], entry["model_strength"])
         else:
             lora = comfy.utils.load_torch_file(entry["absolute_path"], safe_load=True)
             model, clip = comfy.sd.load_lora_for_models(

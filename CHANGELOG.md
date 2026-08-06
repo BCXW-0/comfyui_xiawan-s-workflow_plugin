@@ -1,5 +1,18 @@
 # Changelog
 
+## R-1.4.1 - 2026-08-06
+
+### 修复
+
+- 修复 LoRA Manager 扫描缓存尚未完成或未包含新文件时，把无扩展名 LoRA 名称直接传给文件系统导致加载失败的问题。
+- LoRA 现在统一通过 ComfyUI `folder_paths` 解析，支持带扩展名、无扩展名、子目录和直接文件路径；无法解析的条目会被跳过并记录警告，不再让整个队列因 `FileNotFoundError` 中断。
+- 同步修复标准 LoRA、Nunchaku Flux 和 Nunchaku Qwen-Image 分支的路径解析。
+
+### ComfyUI 兼容性
+
+- 按 ComfyUI 0.32.2 兼容性要求复核 `folder_paths.get_full_path`、`comfy.utils.load_torch_file` 和 `comfy.sd.load_lora_for_models` 的调用方式，保留 0.28.0 及以上运行时的稳定接口。
+- R-1.4.0 的发布工作流和开发者实际运行工作流均不修改；R-1.4.1 仅包含 LoRA 加载与兼容性修复。
+
 ## R-1.4.0 - 2026-08-06
 
 ### ComfyUI 兼容性
